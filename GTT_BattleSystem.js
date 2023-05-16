@@ -5,7 +5,7 @@
 /*:
  * @target MZ
  * @plugindesc 
- * @author Getatumuri
+ * @author 
  *
  * @help AltMenuScreen.js
  *
@@ -18,7 +18,7 @@
 /*:ja
  * @target MZ
  * @plugindesc SRPG的なバトルシステムを実装する
- * @author Getatumuri
+ * @author 
  *
  * @help GTT_BattleSystem.js
  *

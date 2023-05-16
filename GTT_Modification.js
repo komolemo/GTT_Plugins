@@ -5,7 +5,7 @@
 /*:
  * @target MZ
  * @plugindesc 
- * @author Getatumuri
+ * @author 
  *
  * @help AltMenuScreen.js
  *
@@ -18,7 +18,7 @@
 /*:ja
  * @target MZ
  * @plugindesc 廃墟ハウスを作成/保存するプラグイン
- * @author Getatumuri
+ * @author 
  *
  * @help GTT_Modification.js
  *

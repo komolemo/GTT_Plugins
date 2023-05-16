@@ -5,7 +5,7 @@
 /*:
  * @target MZ
  * @plugindesc 
- * @author Getatumuri
+ * @author 
  *
  * @help GTT_OriginalLot.js
  *
@@ -18,7 +18,7 @@
 /*:ja
  * @target MZ
  * @plugindesc メニュー画面のレイアウトを変更します。
- * @author Getatumuri
+ * @author 
  *
  * @help GTT_OriginalLot.js
  *

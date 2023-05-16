@@ -5,7 +5,7 @@
 /*:
  * @target MZ
  * @plugindesc 
- * @author Getatumuri
+ * @author 
  *
  * @help GTT_VariousArray.js
  *
@@ -18,7 +18,7 @@
 /*:ja
  * @target MZ
  * @plugindesc フィールドバトルシステム関連の処理
- * @author Getatumuri
+ * @author 
  *
  * @help GTT_VariousArray.js
  *
