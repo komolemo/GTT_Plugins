@@ -81,1483 +81,1623 @@
  * @type number
  * @default 0
  * 
+ * @param Dead_Performance
+ * @text 死亡演出
+ * @desc バトラー死亡時の演出に関する諸設定
+ * @type struct<deadSettings>
  * 
- * @command ACTIVATE
- * @text スキル発動のデータ上の処理
- * @desc 
+ * @command ENCOUNT
+ * @text エンカウント
+ * @desc エンカウントに関するデータ上の処理
  * 
- * @command CREATE_ANIME_EVENT
- * @text イベントデータ生成
- * @desc アニメーション用イベントの情報を生成
- * 
- * @arg name
- * @test イベント名
- * @desc アニメーション用イベントの名前
+ * @arg troopId
+ * @text ID
+ * @desc 敵グループのID
  * @type string
- * @default "AnimationTarget"
  * 
- * @command PLAY_ANIMATION
- * @text アニメーション再生
- * @desc 攻撃アニメーション再生
- * 
+ * @param animationTargetId
+ * @text ID/名前
+ * @desc アニメーション再生用のイベントのIDあるいは名前を入力
+ * @type string
  * 
  */
+
+/*~struct~deadSettings:ja
+ * @param animationId
+ * @text 死亡演出
+ * @desc バトラー死亡時のアニメーションID
+ * @type animation
+ * @default 0
+ * @
+ * @param characterImage
+ * @text 画像
+ * @desc 死亡時のキャラクター画像
+ * @type file
+ * @dir img/characters
+ * @
+ * @param charaImgIndex
+ * @text インデックス
+ * @desc 左上から順に0~7
+ * @type number
+ * @default 0
+ * @min 0
+ * @max 7
+ * @
+ * @param charaDirection
+ * @text 向き
+ * @desc キャラクターの向き
+ * @type select
+ * @
+ * @option 下
+ * @value 2
+ * @
+ * @option 左
+ * @value 4
+ * @
+ * @option 右
+ * @value 6
+ * @
+ * @option 上
+ * @value 8
+*/
 
 (() => {
     'use strict';
 
-const pluginName = document.currentScript.src.match(/^.*\/(.*).js$/)[1];
-const parameters = PluginManager.parameters(pluginName);
-const script = document.currentScript;
+    const pluginName = document.currentScript.src.match(/^.*\/(.*).js$/)[1];
+    const parameters = PluginManager.parameters(pluginName);
+    const script = document.currentScript;
 
-const MIN_X = Number(parameters['mapMinX'] || 0);
-const MAX_X = Number(parameters['mapMaxX'] || 0);
-const MIN_Y = Number(parameters['mapMinY'] || 0);
-const MAX_Y = Number(parameters['mapMaxY'] || 0);
+    const MIN_X = Number(parameters['mapMinX'] || 0);
+    const MAX_X = Number(parameters['mapMaxX'] || 0);
+    const MIN_Y = Number(parameters['mapMinY'] || 0);
+    const MAX_Y = Number(parameters['mapMaxY'] || 0);
 
-const ENEMY_WEAPON = Number(parameters['enemyWeaponId'] || 0);
-const STATUS_VARIABLE = Number(parameters['statusVariableId'] || 0);
-const TURNPROGRESS_SWITCH = Number(parameters['turnProgressSwitch'] || 0);
+    const ENEMY_WEAPON = Number(parameters['enemyWeaponId'] || 0);
+    const STATUS_VARIABLE = Number(parameters['statusVariableId'] || 0);
+    const TURNPROGRESS_SWITCH = Number(parameters['turnProgressSwitch'] || 0);
 
-const ABILITY_SKILLTYPE = Number(parameters['abilitySkillTypeId'] || 0);
-const ULTIMATE_SKILLTYPE = Number(parameters['ultimateSkillTypeId'] || 0);
+    const ABILITY_SKILLTYPE = Number(parameters['abilitySkillTypeId'] || 0);
+    const ULTIMATE_SKILLTYPE = Number(parameters['ultimateSkillTypeId'] || 0);
 
-const COOLTIME_CORRECTIONVALUE = Number(parameters['coolTimeCorrectionValue'] || 0);
+    const COOLTIME_CORRECTIONVALUE = Number(parameters['coolTimeCorrectionValue'] || 0);
 
-//プラグインコマンド
-PluginManagerEx.registerCommand(script, 'ACTIVATE', () => {
-    $gameBattleSystems.skillActivate();
-});
+    const CRITICAL_RATE = 300
 
-PluginManagerEx.registerCommand(script, 'CREATE_ANIME_EVENT', (arg) => {
-    $gameBattleSystems.createSkillTargetEventsList(arg.name);
-});
+    const ANIMATION_TARGET = parameters['animationTargetId'];
+    const DEAD_SETTING = JSON.parse(parameters['Dead_Performance']);
+    console.log(DEAD_SETTING)
 
-PluginManagerEx.registerCommand(script, 'PLAY_ANIMATION', () => {
-    $gameBattleSystems.requestAnimations(); //アニメーション再生
-    $gameBattleSystems.eraseAnimeEvents(); //アニメーション用イベントの消去
-});
+    let GTT_Battle = true;
 
-//managerへのBattleSystemsの追加
-    
-window.$gameBattleSystems = {};
-$gameBattleSystems = null;
-
-const _createGameObjects = DataManager.createGameObjects;
-DataManager.createGameObjects = function() {
-    _createGameObjects.call(this);
-    $gameBattleSystems = new Game_BattleSystems();
-};
-
-const _makeSaveContents = DataManager.makeSaveContents;
-DataManager.makeSaveContents = function() {
-    const contents = _makeSaveContents.call(this);
-    contents.gameBattleSystems = $gameBattleSystems;
-    return contents;
-  };
-
-const _extractSaveContents = DataManager.extractSaveContents;
-DataManager.extractSaveContents = function(contents) {
-    _extractSaveContents.call(this, contents);
-    $gameBattleSystems = contents.BattleSystems;
-  };
-
-//objectでのBattleSystemsの追加
-
-function Game_BattleSystems() {
-    this.initialize(...arguments);
-};
-
-Game_BattleSystems.prototype.initialize = function() {
-    this.clear();
-};
-
-Game_BattleSystems.prototype.clear = function() {
-    this._attackData = [];
-    this.debug = {};
-    this._battlerList = [];
-    this._playerAdditionalStatus = {
-        _dex:50, //要改変
-        _weaponProficiency:{
-            //物理
-            martialArts:0,
-            sword:0,
-            spear:0,
-            axes:0,
-            hammer:0,
-            throwing:0,
-            //魔法
-            rod:0,
-            scripture:0,
-            flute:0,
-            mageGun:0,
-        }
-    }
-};
-
-Game_BattleSystems.prototype.attackData = function() {
-    return this._attackData;
-};
-
-Game_BattleSystems.prototype.attackDataIndex = function() {
-    return this._attackDataIndex;
-};
-
-Game_BattleSystems.prototype.battlerList = function() {
-    return this._battlerList;
-};
-
-////■■■■■■■■■■■////
-////エンカウント////
-////■■■■■■■■■■■////
-
-//プレイヤーがエンカウントした位置の情報
-Game_BattleSystems.prototype.encountRegion = function(x, y) {
-    const obj = {
-        _region:$gameMap.regionId(x, y),
-        _mapEncountList:$dataMap.encounterList
-    }
-    return obj;
-};
-
-//敵グループ決定
-Game_BattleSystems.prototype.encountTroop = function(x, y) {
-    const region = this.encountRegion(x, y)._region;
-    const mapEncountList = this.encountRegion(x, y)._mapEncountList;
-
-    const encountList = mapEncountList.filter((v) => {
-        // if(v.regionSet.includes(region)) {
-        //     return encountList.push(v.troopId);
-        // }
-        return v.regionSet.includes(region);
+    // //プラグインコマンド
+    PluginManagerEx.registerCommand(script, 'ENCOUNT', (args) => {
+        const troopId = eval(args.troopId);
+        $gameBattleSystems.encount(troopId);
     });
 
-    const encountTroopGropeId = encountList[Math.floor(Math.random() * encountList.length)].troopId;
-    const encountEnemyNum = $dataTroops[encountTroopGropeId].members.length;
-    const battlerList = new Array(encountEnemyNum + 1);
-
-    this._battlerList = battlerList;
-    this._encountTroopGropeId = encountTroopGropeId;
-    this._encountEnemyNum = encountEnemyNum;
-    this._enemyNum = encountEnemyNum;
-};
-
-//プレイヤースポーン位置を決定
-Game_BattleSystems.prototype.playerSpawn = function() {
-    const obj = {
-        _x:Math.floor(Math.random() * (MAX_X - MIN_X + 1)) + MIN_X,
-        _y:Math.floor(Math.random() * (MAX_Y - MIN_Y + 1)) + MIN_Y,
-    };
-    return obj;
-}
-
-//敵スポーン位置を決定
-Game_BattleSystems.prototype.enemySpawn = function(enemyNum) {
-    const centerX = ((MIN_X + MAX_X) / 2);
-    const centerY = ((MIN_Y + MAX_Y) / 2);
-    const signX = Math.sign($gamePlayer.x - centerX);
-    const signY = Math.sign($gamePlayer.y - centerY);
-
-    const enemyPositionList = [];
-    for (let i = 1; i <= enemyNum; i++) {
-
-        for (let loop = false ; loop != true ;) {
-            const xEnmMod = Math.floor(Math.random() * ((centerX - 1) / 2 + 1));
-            const yEnmMod = Math.floor(Math.random() * ((centerY - 1) / 2 + 1));
+    //managerへのBattleSystemsの追加
         
-            const enemySetX = centerX + xEnmMod * signX;
-            const enemySetY = centerY + yEnmMod * signY;
+    window.$gameBattleSystems = {};
+    $gameBattleSystems = null;
 
-            let anythingExist = enemyPositionList.some(v => {v.x === enemySetX && v.y === enemySetY});
-        
-            if ($gamePlayer.x != enemySetX && $gamePlayer.y != enemySetY &&
-               anythingExist != true) {
-                enemyPositionList.push({_x:enemySetX, _y:enemySetY});
-                loop = true
-            };
-        };
+    const _createGameObjects = DataManager.createGameObjects;
+    DataManager.createGameObjects = function() {
+        _createGameObjects.call(this);
+        $gameBattleSystems = new Game_BattleSystems();
     };
 
-    this._enemyPositionList = enemyPositionList;
+    const _makeSaveContents = DataManager.makeSaveContents;
+    DataManager.makeSaveContents = function() {
+        const contents = _makeSaveContents.call(this);
+        contents.gameBattleSystems = $gameBattleSystems;
+        return contents;
+    };
 
-};
+    const _extractSaveContents = DataManager.extractSaveContents;
+    DataManager.extractSaveContents = function(contents) {
+        _extractSaveContents.call(this, contents);
+        $gameBattleSystems = contents.gameBattleSystems;
+    };
 
-Game_BattleSystems.prototype.enemyPositionList = function () {
-    return this._enemyPositionList;
-};
+    // ================================================================
+    // 
+    // Game_Mapの追加定義
+    // 
+    // ================================================================
 
-//能力値オブジェクト配列生成
-Game_BattleSystems.prototype.createStatusObject = function(troopId) {
-    this.createEnemyData(troopId);
-    this.createPlayerData();
-    this.createCoolTimeObj();
-    this.decideActGaugeMax();
-};
+    // 座標からプレイヤーがいるかも感知する
+    // const _Game_Map_eventsXy = Game_Map.prototype.eventsXy;
+    // Game_Map.prototype.eventsXy = function(x, y) {
+    //     if (GTT_Battle) {
+    //         if ($gamePlayer.x === x && $gamePlayer.y === y) {
+    //             return -1;
+    //         }
+    //     }
+    //     return _Game_Map_eventsXy.apply(this, arguments);
+    // }
 
-// class ememyObj {
-//     constructor(eventId, dataId) {
-//         this._eventId = eventId;
-//         this._dataId = dataId;
-//         this._hp = $dataEnemies[this._dataId].params[0];
-//         this._mp = $dataEnemies[this._dataId].params[1];
-//         this._statusBuffs = {};
-//         this._spStatus = {};
-//         this._selectedWeaponId = ENEMY_WEAPON;
-//         this._state = [null];
-//         this._actQ = 0;
-//         this._actGauge = 0;
-//         this._normalAttackTargetId = [{_eventId:0}];
-//     }
-//     weaponProficiency() {
-//         const p = $dataEnemies[this._dataId].meta.weaponProficiency;
-//         return {
-//             //物理
-//             martialArts:p,
-//             sword:p,
-//             spear:p,
-//             axes:p,
-//             hammer:p,
-//             throwing:p,
-//            //魔法
-//             rod:p,
-//             scripture:p,
-//             flute:p,
-//             mageGun:p            
-//         }
-//     }
-//     status() {
-//         const id = this._dataId;
-//         return {
-//             "mhp":$dataEnemies[id].params[0],
-//             "mmp":$dataEnemies[id].params[1],
-//             "atk":$dataEnemies[id].params[2],
-//             "def":$dataEnemies[id].params[3],
-//             "mat":$dataEnemies[id].params[4],
-//             "mdf":$dataEnemies[id].params[5],
-//             "agi":$dataEnemies[id].params[6],
-//             "luk":$dataEnemies[id].params[7],
-//             "dex":JSON.parse($dataEnemies[id].meta.addBaseStatus)[0]
-//         }
-//     }
-//     statusBuffs() {
-//         return this._statusBuffs;
-//     }
-//     grossStatus() {
-//         return {
-//             "hp":this._hp,
-//             "mp":this._mp,
-//             "mhp":this.status().mhp * (this.statusBuffs().mhpRate + 100),
-//             "mmp":this.status().mmp * (this.statusBuffs().mmpRate + 100),
-//             "atk":this.status().atk * (this.statusBuffs().atkRate + 100),
-//             "def":this.status().def * (this.statusBuffs().defRate + 100),
-//             "mat":this.status().mat * (this.statusBuffs().matRate + 100),
-//             "mdf":this.status().mdf * (this.statusBuffs().mdfRate + 100),
-//             "agi":this.status().agi * (this.statusBuffs().agiRate + 100),
-//             "luk":this.status().luk,
-//             "dex":this.status().dex,
-//         }
-//     }
-//     equip() {
-//         return [$dataWeapons[this._selectedWeaponId]];
-//     }
-//     skill() {
-//         return $gameBattleSystems.skillsList(this._eventId);
-//     }
-// }
+    // ================================================================
+    // 
+    // GTT_BattlerBase/Game_BattlerBaseの追加定義
+    // 
+    // ================================================================
 
-class battler {
-    constructor(eventId, dataId, hp, mp, status, weaponProficiency, weaponId, nAttackTargetId) {
-        this._eventId = eventId;
-        this._dataId = dataId;
-        this._hp = hp;
-        this._mp = mp;
-        this._status = status;
-        this._statusBuffs = {};
-        this._spStatus = {};
-        this._weaponProficiency = weaponProficiency;
-        this._selectedWeaponId = weaponId;
-        this._state = [null];
-        this._actQ = 0;
-        this._actGauge = 0;
-        this._normalAttackTargetId = [{_eventId:nAttackTargetId}];
-    }
-    //HP/MP関連
-    hp() {return this._hp;}
-    gainHp(value) {this._hp = Math.max(Math.min(this._hp + value, this.status().mhp), 0);}
-    mp() {return this._mp;}
-    gainMp(value) {this._hp = Math.max(Math.min(this._mp + value, this.status().mmp), 0);}
-    //能力値関連
-    status() {return this._status;}
-    grossStatus(key) {return this.status()[key] * (this.statusBuffs()[`${key}Rate`] + 100);}
-    weaponProficiency() {return this._weaponProficiency;}
-    //バフ関連
-    statusBuffs() {return this._statusBuffs;}
-    addStatusBuffs(key, rate, turn) {
-        this._statusBuffs[key].push({rate:rate, turn:turn});
-    }
-    //特殊能力値関連
-    spStatus() {return this._spStatus;}
-    //ステート関連
-    state() {return this._state;}
-    addState(key, turn) {
-        this._state[key].push(turn);
-    }
-
-    equip() {
-        return [$dataWeapons[this._selectedWeaponId]];
-    }
-    skill() {
-        return $gameBattleSystems.skillsList(this._eventId);
-    }
-}
-
-Game_BattleSystems.prototype.addBattler = function(index, battlerData) {
-    this._battlerList[index] = battlerData;
-}
-
-//敵能力値オブジェクト生成
-Game_BattleSystems.prototype.createEnemyData = function(troopId) {
-    $dataTroops[troopId].members.forEach((v, i) => {
-        const enemyId = v.enemyId
-        const hp = $dataEnemies[enemyId].params[0];
-        const mp = $dataEnemies[enemyId].params[1];
-        const status = {
-            "mhp":$dataEnemies[enemyId].params[0],
-            "mmp":$dataEnemies[enemyId].params[1],
-            "atk":$dataEnemies[enemyId].params[2],
-            "def":$dataEnemies[enemyId].params[3],
-            "mat":$dataEnemies[enemyId].params[4],
-            "mdf":$dataEnemies[enemyId].params[5],
-            "agi":$dataEnemies[enemyId].params[6],
-            "luk":$dataEnemies[enemyId].params[7],
-            "dex":JSON.parse($dataEnemies[enemyId].meta.addBaseStatus)[0]
-        };
-        const p = JSON.parse($dataEnemies[enemyId].meta.weaponProficiency);
-        const weaponProficiency = {
-            //物理
-            martialArts:p,
-            sword:p,
-            spear:p,
-            axes:p,
-            hammer:p,
-            throwing:p,
-           //魔法
-            rod:p,
-            scripture:p,
-            flute:p,
-            mageGun:p  
+    Object.defineProperties(Game_BattlerBase.prototype, {
+        // Hit Points
+        dex: {
+            get: function() {
+                return this._dex;
+            },
+            configurable: true
         }
-        const weaponId = ENEMY_WEAPON;
-        this.addBattler(i + 1, new battler(i + 1, enemyId, hp, mp, status, weaponProficiency, weaponId, 0));//eventId, dataId, hp, mp, status, weaponId, nAttackTargetId
-    });
-};
+    })
 
-//プレイヤーオブジェクト生成
-// Game_BattleSystems.prototype.createPlayerData = function () {
-
-//     const status = function() {
-//         const getStatus = {
-//             "mhp":$gameActors.actor(1).param(0),
-//             "mmp":$gameActors.actor(1).param(1),
-//             "atk":$gameActors.actor(1).param(2),
-//             "def":$gameActors.actor(1).param(3),
-//             "mat":$gameActors.actor(1).param(4),
-//             "mdf":$gameActors.actor(1).param(5),
-//             "agi":$gameActors.actor(1).param(6),
-//             "luk":$gameActors.actor(1).param(7),
-//             "dex":$gameVariables.value(STATUS_VARIABLE).dex
-//         };
-//         return getStatus;
-//     };
-
-//     const originalStatus = $gameVariables.value(STATUS_VARIABLE);
-//     const weaponProficiency = originalStatus.weaponProficiency;
-    
-//     const playerObj = {
-//         _eventId:0,
-//         status:status,
-//         _statusBuffs:{},
-//         _spStatus:{},
-//         _hp:$gameActors.actor(1).hp,
-//         _mp:$gameActors.actor(1).mp,
-//         _weaponProficiency:weaponProficiency,
-//         equip:function() {return $gameParty.members()[0].equips()},
-//         skill:function() {return $gameBattleSystems.skillsList(0)},
-//         _selectedWeaponId:0,
-//         _state:[null],
-        
-//         _actQ:0,
-//         _actGauge:0
-//     };
-
-//     status()._hp = playerObj._hp;
-//     status()._mp = playerObj._mp;
-
-//     this._battlerList[0] = playerObj;
-
-//     //this._battlerList[battlerIndex].statusBuffs.atkRate
-//     //
-
-//     const grossStatus = function() {
-//         const battlerData = $gameBattleSystems.battlerList()[0];
-//         const getGrossStatus = {
-//             "hp":battlerData._hp,
-//             "mp":battlerData._mp,
-//             "mhp":battlerData.status().mhp * (battlerData.statusBuffs().mhpRate + 100),
-//             "mmp":battlerData.status().mmp * (battlerData.statusBuffs().mmpRate + 100),
-//             "atk":battlerData.status().atk * (battlerData.statusBuffs().atkRate + 100),
-//             "def":battlerData.status().def * (battlerData.statusBuffs().defRate + 100),
-//             "mat":battlerData.status().mat * (battlerData.statusBuffs().matRate + 100),
-//             "mdf":battlerData.status().mdf * (battlerData.statusBuffs().mdfRate + 100),
-//             "agi":battlerData.status().agi * (battlerData.statusBuffs().agiRate + 100),
-//             "luk":battlerData.status().luk,
-//             "dex":battlerData.status().dex,
-//         };
-//         return getGrossStatus;
-//     };
-
-//     this._battlerList[0].grossStatus = grossStatus;
-
-// };
-
-Game_BattleSystems.prototype.createPlayerData = function () {
-    const hp = $gameActors.actor(1).hp;
-    const mp = $gameActors.actor(1).mp;
-    const status = {
-        "mhp":$gameActors.actor(1).param(0),
-        "mmp":$gameActors.actor(1).param(1),
-        "atk":$gameActors.actor(1).param(2),
-        "def":$gameActors.actor(1).param(3),
-        "mat":$gameActors.actor(1).param(4),
-        "mdf":$gameActors.actor(1).param(5),
-        "agi":$gameActors.actor(1).param(6),
-        "luk":$gameActors.actor(1).param(7),
-        "dex":this._playerAdditionalStatus._dex
-    };
-    const weaponProficiency = this._playerAdditionalStatus._weaponProficiency;
-    const weaponId = 4;//武器ID
-    const nAttackTargetId = 1;
-
-    this.addBattler(0, new battler(0, 0, hp, mp, status, weaponProficiency, weaponId, nAttackTargetId));//eventId, dataId, hp, mp, status, weaponProficiency, weaponId, nAttackTargetId
-};
-
-//CTオブジェクト生成
-Game_BattleSystems.prototype.createCoolTimeObj = function () {
-    for (let i = 0 ; i < this.battlerList().length ; i++) {
-        const battlerIndex = i;
-        const skillsList = this.skillsList(battlerIndex);
-        const skillNum = skillsList.length;
-        this._battlerList[i]._coolTimeObj = new Array(skillNum);
-
-        for (let j = 1 ; j <= skillsList.length - 1 ; j++) {
-            const skillIndex = j;
-            this._battlerList[battlerIndex]._coolTimeObj[skillIndex] = {};
-
-            if (skillsList[skillIndex].stypeId === ULTIMATE_SKILLTYPE) {                
-                this._battlerList[battlerIndex]._coolTimeObj[skillIndex]._coolTime = 0;
-                this._battlerList[battlerIndex]._coolTimeObj[skillIndex]._coolTimeMax = skillsList[skillIndex].tpCost * COOLTIME_CORRECTIONVALUE;        
-            } else {
-                this._battlerList[battlerIndex]._coolTimeObj[skillIndex] = null;
-            };
-        };
-
-    };
-};
-
-//行動ゲージの長さ決定
-Game_BattleSystems.prototype.decideActGaugeMax = function () {
-    const battlerList = this.battlerList();
-    const agiList = [];
-    for (let i = 0; i < battlerList.length; i++) {
-        const agi = eval(this.battlerList()[i].status().agi);
-        agiList.push(agi);
-    };
-    
-    const ListMax = function (a, b) {return Math.max(a, b);}
-    let max = agiList.reduce(ListMax);
-    
-    this._actGaugeMax = Math.floor(max * 5 / 10) * 10;
-};
-
-//ウルトボタン生成関連
-
-
-////■■■■■■■■■////
-////ターン進行////
-////■■■■■■■■■////
-
-//ターンごとのatkData配列初期化
-Game_BattleSystems.prototype.attackDataClear = function () {
-    this._attackData = [];
-}
-
-//行動ゲージ更新
-Game_BattleSystems.prototype.addActGauge = function () {
-    const length = this.battlerList().length
-    const List = this.battlerList();
-    for (let i = 1 ; i <= length ; i++) {
-     if (List[i-1] != "dead") {
-      const agi = List[i-1].status().agi;
-      this._battlerList[i-1]._actGauge += agi;
-     };
-    };
-};
-
-//CT経過
-Game_BattleSystems.prototype.coolTimeLapse_ALL = function () {
-    const battlerList = this.battlerList();
-    for (let i = 0 ; i < battlerList.length ; i++) {
-        const battlerIndex = i;
-        this.coolTimeLapse(battlerIndex);
-    };
-};
-
-Game_BattleSystems.prototype.coolTimeLapse = function (battlerIndex) {
-    const skillsList = this.skillsList(battlerIndex);
-    for (let i = 1 ; i <= skillsList.length - 1 ; i++) {
-        if (skillsList[i] != null) {
-            const nowCoolTime = this.battlerList()[battlerIndex]._coolTimeObj[i]._coolTime;
-            const coolTimeMax = this.battlerList()[battlerIndex]._coolTimeObj[i]._coolTimeMax;
-            this._battlerList[battlerIndex]._coolTimeObj[i]._coolTime = Math.min(nowCoolTime + 1, coolTimeMax);            
-        };
-    };
-};
-
-//移動か通常攻撃か
-Game_BattleSystems.prototype.moveOrAttack = function(eventId, skillId) {
-    const battlerData = this.battlerList()[eventId];
-
-    let skillMeta = 0;
-    skillId != 1 ? 
-        skillMeta = $dataSkills[skillId].meta :
-        skillMeta = $dataWeapons[battlerData._selectedWeaponId].meta;
-
-    const targetId = battlerData._normalAttackTargetId[0]._eventId;
-    const targetEnemyX = this.getXorY(targetId)._x;
-    const targetEnemyY = this.getXorY(targetId)._y;
-
-    const actorX = this.getXorY(eventId)._x;
-    const actorY = this.getXorY(eventId)._y;
-
-    const xDistance = Math.abs(actorX - targetEnemyX);
-    const yDistance = Math.abs(actorY - targetEnemyY);
-    const Distance = Math.max(xDistance, yDistance);
-    
-    const range = JSON.parse(skillMeta.skillRange)[1];
-    
-    let act = 0
-    Distance <= range ? act =  "attack" : act = "move";
-
-    this._towardChara = targetId;
-    return act;
-};
-
-//イベントの座標を取得
-Game_BattleSystems.prototype.getXorY = function(eventId) {
-    const chara = eventId > 0 ? $gameMap.event(eventId) : $gamePlayer;
-    return {_x:chara.x, _y:chara.y, _direction:chara.direction()};
-};
-
-//プレイヤーの向きを決める
-Game_BattleSystems.prototype.decideDirection = function(eventId) {
-    const targetEnemyX = this.getXorY(eventId)._x;
-    const targetEnemyY = this.getXorY(eventId)._y;
-    //y座標
-    if ($gamePlayer.y - targetEnemyY > 0) {
-        return 3;
-    } else if ($gamePlayer.x - targetEnemyX > 0) {
-        return 1;
-    } else if ($gamePlayer.x - targetEnemyX < 0) {
-        return 2;
-    } else if (1 === 1) {
+    const _Game_BattlerBase_initMembers = Game_BattlerBase.prototype.initMembers;
+    Game_BattlerBase.prototype.initMembers = function() {
+        _Game_BattlerBase_initMembers.apply(this);
+        this._dex = 0;
+        this._weaponProficiencyPlus = $dataSystem.weaponTypes.map(() => {return 0});
+    }
+    // ================================================================
+    // 器用度
+    // ================================================================
+    Game_BattlerBase.prototype.addDex = function(value) {
+        this._dex = Math.max(this._dex + value, 0);
+    }
+    // ================================================================
+    // ある武器タイプIDの熟練度
+    // ================================================================
+    Game_BattlerBase.prototype.weaponProficiency = function(wtypeId) {
+        const value =
+            this.weaponProficiencyBasePlus(wtypeId) *
+            this.weaponProficiencyRate(wtypeId) *
+            this.weaponProficiencyBuffRate(wtypeId);
+        return value;
+    }
+    Game_BattlerBase.prototype.weaponProficiencyBase = function(/*wtypeId*/) {
         return 0;
     }
-};
+    Game_BattlerBase.prototype.weaponProficiencyPlus = function(wtypeId) {
+        return this._weaponProficiencyPlus[wtypeId];
+    }
+    Game_BattlerBase.prototype.weaponProficiencyBasePlus = function(wtypeId) {
+        return Math.max(0, this.weaponProficiencyBase(wtypeId) + this.weaponProficiencyPlus(wtypeId));
+    }
+    // ================================================================
+    // 味方か敵か
+    // ================================================================
+    Game_BattlerBase.prototype.role = function() {
+        return this._role;
+    }
+    Game_BattlerBase.prototype.setRole = function(param) {
+        this._role = param;
+    }
+    const _Game_BattlerBase_isActor = Game_BattlerBase.prototype.isActor;
+    Game_BattlerBase.prototype.isActor = function() {
+        if (this._role) {
+            return this._role === "actor";
+        }
+        return _Game_BattlerBase_isActor.apply(this);
+    }
+    // ================================================================
+    // 死亡状態
+    // ================================================================
+    Game_BattlerBase.prototype.isEliminated = function() {
+        return this.isHidden() && this.isDeathStateAffected();
+    }
 
-//攻撃時にatkDataを生成
-//targetIdは攻撃タイプがtargetの時のみ関数に影響する
-Game_BattleSystems.prototype.createAttackData = function (eventId) {
-    const atkData = {
-        _skillUserId:this.battlerList()[eventId]._eventId,
-        _rockOnTargetId:this.battlerList()[eventId]._normalAttackTargetId[0],
-    };
-    return atkData;
-};
+    // ================================================================
+    // 
+    // GTT_Battler
+    // 
+    // ================================================================
 
-//skillId:skillId,
+    const _Game_Battler_initMembers = Game_Battler.prototype.initMembers;
+    Game_Battler.prototype.initMembers = function() {
+        _Game_Battler_initMembers.apply(this);
+        this._spawnData = [0, 0];
+        this._actNum = 0;
+        this._actGauge = 0;
+        this._actGaugeMax = 0;
+        this._selectedWeaponId = 0;
+        this._subjectBattlerId = 0;
+        this._subjectCharacterId = 0;
+        // このBattlerのキャラクターIDが1以上(つまり敵イベント)のとき、通常攻撃の対象はプレイヤー限定
+        this._rockOnBattlerId = this._subjectCharacterId > 0 ? 0 : 1;
+        this._rockOnCharacterId = 0;
+        this._normalAttackSkillId = 1;
+    }
 
-//スキル配列を取得
-Game_BattleSystems.prototype.skillsList = function (battlerIndex) {
-    const eventId = this.battlerList()[battlerIndex]._eventId;
-    let skillsList = [null];
+    // ================================================================
+    // 主体に関するデータ
+    // ================================================================
 
-    if (eventId != 0) {
-        const enemyDataId = this.battlerList()[eventId]._dataId;      
-        const length = $dataEnemies[enemyDataId].actions.length;
+    // バトラーインデックスを取得
+    Game_Battler.prototype.subjectBattlerId = function() {
+        return this._subjectBattlerId;
+    }
 
-        for (let i = 1; i <= length; i++) {
-         const obj = $dataSkills[$dataEnemies[enemyDataId].actions[i-1].skillId];
-         skillsList.push(obj) 
-        } ;
+    // バトラーインデックスを設定
+    Game_Battler.prototype.setSubjectBattlerId = function(value) {
+        this._subjectBattlerId = value;
+    }
 
-    } else if (eventId === 0) {
-        skillsList = skillsList.concat($gameParty.members()[0].skills()); 
-    };
- 
-    return skillsList;
-};
+    // 主体キャラクターIDを出力する
+    Game_Battler.prototype.subjectCharacterId = function() {
+        return this._subjectCharacterId;
+    }
 
-//通常攻撃かアビリティか
-
-//_attackDataIndexからbattlerIndexを取得
-Game_BattleSystems.prototype.getBattlerIndex = function(attackDataIndex) {
-    return this.attackData()[attackDataIndex]._skillUserId;
-};
-
-//アビリティを取得して格納
-Game_BattleSystems.prototype.getAbilityId = function (battlerIndex) {
-    const skillsList = this.skillsList(battlerIndex);
-    // console.log(skillsList)
-    const tempList = skillsList.filter((v) => {return v != null && v.stypeId === ABILITY_SKILLTYPE});
-    //アビリティが複数の場合、ランダムでその一つになる
-    const abilitySkill = tempList.length > 0 ? tempList[Math.floor(Math.random() * tempList.length)].id : 1;
-    return abilitySkill;
-};
-
-Game_BattleSystems.prototype.decideAttackSkill = function (battlerIndex) {
-    //通常攻撃時のスキルデータ、スキルor武器メタデータを格納
-    let skillId = 1; //this.getNormalAttackSkill(battlerIndex);
-    let skillData = $dataSkills[1];
-    let skillMeta = $dataWeapons[this.battlerList()[battlerIndex]._selectedWeaponId].meta;
-
-    //戦技値と武器熟練度を取得
-    const userStatus = this.battlerList()[battlerIndex].status();
-    const proficiency = this.weaponProficiency(battlerIndex, this.getAbilityId(battlerIndex));
-
-    //目標値と乱数を生成
-    const goal = this.getAbilityId(battlerIndex) > 1 ? (userStatus.dex + proficiency) / 2 : 0;
-    const random = Math.floor(Math.random() * 100 + 1);
-    
-    //判定成功時のスキルデータ、スキルor武器メタデータを格納
-    if (goal >= random) {
-        skillId = this.getAbilityId(battlerIndex);
-        skillData = $dataSkills[skillId];
-        skillMeta = $dataSkills[skillId].meta;
-    };
-
-    return {_id:skillId, _skillData:skillData, _skillMeta:skillMeta};
-};
-
-Game_BattleSystems.prototype.getNormalAttackSkill = function(battlerIndex) {
-    const weaponData = $dataWeapons[this.battlerList()[battlerIndex]._selectedWeaponId];
-    let skillId = 1;
-    if (this.battlerList()[battlerIndex]._selectedWeaponId != undefined) {
-        for (let i = 1 ; i <= weaponData.traits.length ; i++) {
-            if (weaponData.traits[i-1].code === 35) {
-                skillId = weaponData.traits[i-1].dataId;
-            };
-        };
-    };
-    return skillId;
-};
-
-//範囲表示
-
-//マウスのマップ上と画面上の座標取得
-Game_BattleSystems.prototype.mouseMapPoint = function() {
-    const inputX = Math.floor((TouchInput._x - 24) / 48); //48はマスの辺長
-    const inputY = Math.floor((TouchInput._y - 6) / 48); //6はキャラクターのy座標補正
-    
-    const mouseMapX = Math.max(Math.min(inputX, MAX_X), MIN_X);
-    const mouseMapY = Math.max(Math.min(inputY, MAX_Y), MIN_Y);
-
-    this._mouseMapX = mouseMapX;
-    this._mouseMapY = mouseMapY;
-    this._targetScreenX = mouseMapX * 48 + 24 + 24;
-    this._targetScreenY = mouseMapY * 48 + 24 + 6;
-};
-
-//スキル発動
-
-//スキル発動に関するデータ上の処理
-Game_BattleSystems.prototype.skillActivate = function() {
-    const index = this.attackDataIndex();
-    const battlerIndex = this.getBattlerIndex(index);
-    
-    //通常攻撃時、確率で特殊攻撃に変化
-    const skill = this.decideAttackSkill(battlerIndex);
-    this._attackData[index]._skillId = skill._id;
-    this._attackData[index]._skillData = skill._skillData;
-    this._attackData[index]._skillMeta = skill._skillMeta;
-    //攻撃対象の敵IDの収集＋アニメ再生用イベントの座標を収集
-    this.createListAboutTarget();
-    //コスト
-    this.consumeCost();
-}
-
-//攻撃対象収集＋スキルアニメーション再生用イベントの設置座標を配列に格納
-Game_BattleSystems.prototype.createListAboutTarget = function() {
-    const index = this.attackDataIndex();
-    const userEventId = this.attackData()[index]._skillUserId;
-    const skillData = this.attackData()[index]._skillData;
-    const skillMeta = this.attackData()[index]._skillMeta;
-
-    this._attackData[index]._skillTargetId = this.skillTargetList(userEventId, skillMeta);
-    this._targetNum = this.skillTargetList(userEventId, skillMeta).length - 1;
-    this._attackData[index]._animeTarget = this.skillAnimeTarget(userEventId, skillMeta);   
-    this._loopMax = skillData.repeats * this.attackData()[index]._skillTargetId.length - 1;
-};
-
-// ================================================================
-// 
-// スキルアニメーション関係処理
-// 
-// ================================================================
-
-//アニメーション再生
-Game_BattleSystems.prototype.requestAnimations = function() {
-    const targets = this.targetEventsIdList().map((v) => {return $gameMap.event(v)})
-    const animeId = this.getAnimation();
-    $gameTemp.requestAnimation(targets, animeId);
-    
-    //this._characterId = targetIds[targetIds.length - 1];
-    //this.setWaitMode("animation");
-}
-
-//アニメーション再生用イベントの設置の準備
-Game_BattleSystems.prototype.createSkillTargetEventsList = function(name) {
-    const list = [...this.attackData()[this.attackDataIndex()]._animeTarget]
-    for(const v of list) {
-        if(v != null) {
-            v._id = name;
-            v._template = true;
+    // 主体キャラクターデータを出力する
+    Game_Battler.prototype.subjectCharacter = function() {
+        if (this._subjectCharacterId > 0) {
+            return $gameMap.event(this._subjectCharacterId);
+        } else {
+            return $gamePlayer;
         }
     }
-}
 
-//設置した再生用イベントのIDからアニメーション再生関数の引数を生成
-Game_BattleSystems.prototype.targetEventsIdList = function() {
-    const list = [...this.attackData()[this.attackDataIndex()]._animeTarget]
-    const idList = [];
-    for (let i = 0; i < list.length; i++) {
-        if (list[i] != null) {
-            // const id = list[i]._eventId
-            // const chara = id > 0 ? $gameMap.event(id) : Game_Interpreter.prototype.character(-1);
-            // idList.push(chara);
-            idList.push(list[i]._eventId);
+    // 主体キャラクターIDを設定
+    Game_Battler.prototype.setSubjectCharacterId = function(value) {
+        this._subjectCharacterId = value;
+    }
+
+    // ================================================================
+    // 通常攻撃の対象に関するデータ
+    // ================================================================
+
+    // 通常攻撃の対象のキャラクターIdを出力する
+    Game_Battler.prototype.rockOnCharacterId = function() {
+        return this._rockOnCharacterId;
+    }
+
+    // 通常攻撃の対象のキャラクターデータを出力する
+    Game_Battler.prototype.rockOnCharacter = function() {
+        if (this._rockOnCharacterId > 0) {
+            return $gameMap.event(this._rockOnCharacterId);
+        } else {
+            return $gamePlayer;
         }
     }
-    return idList;
-}
 
-// //アニメーション再生用イベントの消去
-Game_BattleSystems.prototype.eraseAnimeEvents = function() {
-    const animeTarget = this.attackData()[this.attackDataIndex()]._animeTarget;
-    
-    for (let i = 1 ; i <= animeTarget.length - 1; i++) {
-     $gameMap.eraseEvent(animeTarget[i]._eventId);
-    };
-}
-
-//アニメーション再生用イベントの設置座標を配列に収める
-Game_BattleSystems.prototype.skillAnimeTarget = function(userEventId, skillMeta) {
-    const animeTarget = [null];
-
-    const atkType = JSON.parse(skillMeta.skillRange)[0];
-    if (atkType === "direction") {
-        if (userEventId === 0) {userEventId = - 1};
-        const charaDirect = this.getXorY(userEventId)._direction / 2;
-
-        const range = JSON.parse(skillMeta.skillRange)[1];
-        const coModList = [0, -1, 1, 0];
-        
-        const skillAnimetionX = $gamePlayer.x + coModList[(charaDirect - 1) % 4] * (range / 2 + 1);
-        const skillAnimetionY = $gamePlayer.y + coModList[(charaDirect + 1) % 4] * (range / 2 + 1);
-        
-        const obj = {
-         _x:Math.max(Math.min(skillAnimetionX, 14), 4),
-         _y:Math.max(Math.min(skillAnimetionY, $gameMap.height() - 1), 0)
-        };
-        
-        animeTarget.push(obj);
+    // 通常攻撃の対象の設定
+    Game_Battler.prototype.setRockOnBattler = function(value) {
+        this.setRockOnBattlerId(value);
+        const charaId = $gameBattleSystems.battlers()[this._rockOnBattlerId].subjectCharacterId();
+        this.setRockOnCharacterId(charaId);
     }
 
-    else if (atkType === "scope") {
-        const range = JSON.parse(skillMeta.skillRange)[1];      
-        const targetList = [];
-        
-        for (let i = 1, x = 0, y = 0; i <= range ** 2 ; i++) {
-            x = $gamePlayer.x - Math.floor((range - 1) / 2) + Math.floor((i + 1) % range);
-            y = $gamePlayer.y - Math.floor((range - 1) / 2) + Math.floor((i - 1) / range);
-            const eventId = $gameMap.eventIdXy(x, y);
+    // 通常攻撃の対象のバトラーインデックスを設定
+    Game_Battler.prototype.setRockOnBattlerId = function(value) {
+        this._rockOnBattlerId = value;
+    }
 
-            if (eventId > 0) {
-                //ID収集
-                const obj = {_eventId:eventId};
-                targetList.push(obj);
+    // 通常攻撃の対象のバトラーインデックスを設定
+    Game_Battler.prototype.setRockOnCharacterId = function(value) {
+        this._rockOnCharacterId = value;
+    }
+
+    // GTT_Battler.prototype.weaponProficiencyForItem = function(item) {
+    //     const value = this.weaponProficiency(item.wtypeId);
+    //     return value;
+    // }
+
+    // 使用中の武器Id
+    Game_Battler.prototype.selectedWeaponId = function() {
+        return this._selectedWeaponId;
+    }
+
+    // 使用中の武器Idを登録
+    Game_Battler.prototype.setSelectedWeaponId = function(selectedWeaponId) {
+        this._selectedWeaponId = selectedWeaponId;
+    }
+
+    // 使用中の武器データ
+    Game_Battler.prototype.selectedWeaponData = function() {
+        return $dataWeapons[this.selectedWeaponId()];
+    }
+
+    // ================================================================
+    // ターン毎に行う上位処理
+    // ================================================================
+
+    // ターンごとに行動を決めて行動する上位処理
+    Game_Battler.prototype.processTurn = function () {
+        // 生きているバトラーのみ行動できる
+        if (this.isAlive()) {
+            // ターゲット
+            if (this.isActor()) {this.refleshTarget();}
+            // 行動ゲージ
+            this.addActGauge();
+            if (this.canAct()) {
+                // まず対象の方を向く
+                this.turnTowardRockOnCharacter();
+                // 行動の内容を決める
+                this.makeActions();
+                // データ上で行動する
+                this.processActions();
+            }
+            this.onAllActionsEnd();
+        }
+    }
+
+    //行動ゲージ更新
+    Game_Battler.prototype.addActGauge = function () {
+        if (!this.isDead()) {
+            this._actGauge += this.agi;
+        }
+    }
+
+    // 行動するかどうか
+    Game_Battler.prototype.canAct = function() {
+        if (!this.isDead()) {
+            return this._actGauge >= this._actNum * this._actGaugeMax;
+        }
+        return false;
+    }
+
+    // 行動の内容を決める
+    const _Game_Battler_makeActions = Game_Battler.prototype.makeActions;
+    Game_Battler.prototype.makeActions = function () {
+        if (GTT_Battle) {
+            this.clearActions();
+            const actionTimes = 1;
+            for (let i = 0; i < actionTimes; i++) {
+                this.moveOrAttack(this._normalAttackSkillId);
+                const action = new GTT_Action(this);
+                this._actions.push(action);
+            }
+        } else {
+            _Game_Battler_makeActions.apply(this);
+        }
+    }
+
+    //移動か通常攻撃か
+    Game_Battler.prototype.moveOrAttack = function(skillId) {
+        const targetEnemyX = this.rockOnCharacter().x;
+        const targetEnemyY = this.rockOnCharacter().y;
+        const actorX = this.subjectCharacter().x;
+        const actorY = this.subjectCharacter().y;
+
+        const xDistance = Math.abs(actorX - targetEnemyX);
+        const yDistance = Math.abs(actorY - targetEnemyY);
+        const Distance = Math.max(xDistance, yDistance);
+        
+        const range = this.normalAttackRange(skillId);
+        
+        this._moveOrAttack = Distance <= range ? "attack" : "move";
+    }
+
+    Game_Battler.prototype.normalAttackRange = function(skillId) {
+        if (skillId > 1) {
+            return JSON.parse($dataSkills[skillId].meta.skillRange)[1];
+        } else
+        if (this.selectedWeaponData()) {
+            return JSON.parse(this.selectedWeaponData().meta.skillRange);
+        }
+        return 1;
+    }
+
+    Game_Battler.prototype.processActions = function() {
+        for (const action of this._actions) {
+            action.processAction();
+        }
+    }
+
+    // ================================================================
+    // 移動に関する処理
+    // ================================================================
+
+    // 対象の方を向く
+    Game_Battler.prototype.turnTowardRockOnCharacter = function() {
+        this.subjectCharacter().turnTowardCharacter(this.rockOnCharacter());
+    }
+
+    // 対象の方へ行く
+    Game_Battler.prototype.moveTowardRockOnCharacter = function() {
+        this.subjectCharacter().moveTowardCharacter(this.rockOnCharacter());
+    }
+
+    // 回避する
+    Game_Battler.prototype.evade = function(dx, dy, hitRate) {
+        // 移動の処理
+        const args = [];
+        if (dx) {
+            if (dx === -1) {
+                args.push(4);
+            } else 
+            if (dx === 1) {
+                args.push(6);
+            }
+        }
+        if (dy) {
+            if (dy === -1) {
+                args.push(2);
+            } else 
+            if (dy === 1) {
+                args.push(8);
+            }
+        }
+        // 回避SE
+        if (hitRate === 0) {
+            SoundManager.playMiss();
+        }
+        SoundManager.playEvasion();
+        // アクション
+        this.subjectCharacter().evade(args);
+    }
+
+    Game_Battler.prototype.abilityList = function () {
+        // 
+    }
+
+    // ================================================================
+    // 描画に関する処理
+    // ================================================================
+
+    Game_Battler.prototype.performanceProcessData = function () {
+        const dataList = this._actions.map((action) => {return action.performanceProcessData()});
+        return dataList.flat();
+    }
+
+    // ================================================================
+    // 
+    // GTT_Actorの定義
+    // 
+    // ================================================================
+
+    // class GTT_Actor extends Game_Actor {
+    //     constructor(actorId) {
+    //         super(actorId);
+    //         this.setRole("actor");
+    //     }
+    //     //アビリティを取得して格納
+    //     abilityList() {
+    //         return this.skills().filter((v) => {return v && v.stypeId === ABILITY_SKILLTYPE});
+    //     }
+    //     // 通常攻撃の対象が死んでいたら変更する
+    //     refleshTarget() {
+    //         if (this._rockOnBattlerId) {
+    //             if ($gameBattleSystems.battlers()[this._rockOnBattlerId].isDead()) {
+    //                 this.autoReselectTarget();
+    //             }
+    //         } else {
+    //             this.autoReselectTarget();
+    //         }
+    //     }
+    //     // 通常攻撃の対象を生きている中で一番近い敵に自動で設定する
+    //     autoReselectTarget() {
+    //         const battlerIndex = $gameBattleSystems.aliveEnemies().reduce((total, current) => {
+    //             const distance = Math.abs(current.subjectCharacter().x - this.subjectCharacter().x) + Math.abs(current.subjectCharacter().y - this.subjectCharacter().y);
+    //             if (distance < total[0]) {
+    //                 return [distance, current.subjectBattlerId()];
+    //             } else {
+    //                 return total;
+    //             }
+    //         }, [Infinity, 0]);
+    //         this.setRockOnBattler(battlerIndex[1]);
+    //     }
+    //     // アクションの内容を決める
+    //     makeActions() {
+    //         Game_Battler.prototype.makeActions.call(this);
+    //     }
+    // }
+
+    const _Game_Actor_initialize = Game_Actor.prototype.initialize;
+    Game_Actor.prototype.initialize = function() {
+        _Game_Actor_initialize.apply(this, arguments);
+        this.setRole("actor");
+    }
+
+    //アビリティを取得して格納
+    Game_Actor.prototype.abilityList = function() {
+        return this.skills().filter((v) => {return v && v.stypeId === ABILITY_SKILLTYPE});
+    }
+    // 通常攻撃の対象が死んでいたら変更する
+    Game_Actor.prototype.refleshTarget = function() {
+        if (this._rockOnBattlerId) {
+            if ($gameBattleSystems.battlers()[this._rockOnBattlerId].isEliminated()) {
+                this.autoReselectTarget();
+            }
+        } else {
+            this.autoReselectTarget();
+        }
+    }
+    // 通常攻撃の対象を生きている中で一番近い敵に自動で設定する
+    Game_Actor.prototype.autoReselectTarget = function() {
+        const battlerIndex = $gameBattleSystems.aliveEnemies().reduce((total, current) => {
+            const distance = Math.abs(current.subjectCharacter().x - this.subjectCharacter().x) + Math.abs(current.subjectCharacter().y - this.subjectCharacter().y);
+            if (distance < total[0]) {
+                return [distance, current.subjectBattlerId()];
+            } else {
+                return total;
+            }
+        }, [Infinity, 0]);
+        this.setRockOnBattler(battlerIndex[1]);
+    }
+    // アクションの内容を決める
+    Game_Actor.prototype.makeActions = function() {
+        Game_Battler.prototype.makeActions.call(this);
+    }
+    // ================================================================
+    // 
+    // GTT_Enemyの定義
+    // 
+    // ================================================================
+    const _Game_Enemy_initialize = Game_Enemy.prototype.initialize;
+    Game_Enemy.prototype.initialize = function() {
+        _Game_Enemy_initialize.apply(this, arguments);
+        this.initBattler();
+    }
+
+    Game_Enemy.prototype.initBattler = function() {
+        this.setRole("enemy");
+        this.setRockOnBattlerId(0);
+        this.setRockOnCharacterId(-1);
+    }
+
+    Game_Enemy.prototype.abilityList = function() {
+        const skillList = this.enemy().actions.map((v) => {return $dataSkills[v.skillId]});
+        return skillList.filter((v) => {return v && v.stypeId === ABILITY_SKILLTYPE});
+    }
+
+    // class GTT_Enemy extends Game_Enemy {
+    //     constructor(enemyId) {
+    //         super(enemyId, 0, 0);
+    //         this.setRole("enemy");
+    //         this.setRockOnBattlerId(0);
+    //         this.setRockOnCharacterId(-1);
+    //     }
+    //     //アビリティを取得して格納
+    //     abilityList() {
+    //         const skillList = this.enemy().actions.map((v) => {return $dataSkills[v.skillId]});
+    //         return skillList.filter((v) => {return v && v.stypeId === ABILITY_SKILLTYPE});
+    //     }
+    // }
+
+    // ================================================================
+    // 
+    // GTT_Actionの定義
+    // 
+    // ================================================================
+
+    // 行動の内容を決める
+    // 行動内容の効果が発動する場所を決める
+    // 行動内容が発動するか決める
+    // 発動した行動内容の効果を適用する
+
+    class GTT_Action extends Game_Action {
+        constructor(battler) {
+            super(battler);
+            this._actionType = "";
+            this._range = 0;
+            this._skillId = 0;
+            this._itemScope = new GTT_ItemScope();
+            this._itemPerformance = new GTT_ActionPerformance();
+            this._weapon = new Game_Item();
+            this.initAction();
+        }
+        // ================================================================
+        // 初期のデータ設定
+        // ================================================================
+        initAction() {
+            // 武器の登録
+            this._weapon.setObject(this.subject().selectedWeaponData());
+            // 攻撃か移動か
+            this.setActionType(this.subject()._moveOrAttack);
+            // 攻撃なら攻撃データを設定
+            this.setupAction();
+        }
+        // ================================================================
+        // データ
+        // ================================================================
+        // 主体に関する処理
+        subject() {
+            return $gameBattleSystems.battlers()[this._subjectBattlerId];
+        }
+        setSubject(battler) {
+            this._subjectBattlerId = battler.subjectBattlerId();
+        }
+        // 攻撃タイプを設定
+        setActionType(param) {
+            this._actionType = param;
+        }
+        // 行動タイプが攻撃なら攻撃データを整える
+        setupAction() {
+            if (this.isAttack()) {
+                this.decideAttackSkill();
+                this.setSkill();
+                // 攻撃対象の設定
+                this._itemScope.setup(this);
+            }
+        }
+        // 移動か
+        isMove() {
+            return this._actionType === "move";
+        }
+        // 攻撃か
+        isAttack() {
+            return this._actionType === "attack";
+        }
+        // 攻撃スキルを決定し、プロパティに設定
+        decideAttackSkill() {
+            //戦技値と武器熟練度を取得
+            const skillId = this.getAbilityId();
+            const proficiency = this.weaponProficiencyForItem(skillId);
+            //目標値と乱数を生成
+            const goal = skillId > 1 ? (this.subject().dex + proficiency) / 2 : 0;
+            const random = Math.floor(Math.random() * 100 + 1);
+            //判定成功時のスキルデータ、スキルor武器メタデータを格納
+            this._skillId = goal >= random ? this.getAbilityId() : 1;
+        }
+        // アビリティを決めて出力する
+        getAbilityId() {
+            const abilityList = this.subject().abilityList();
+            //アビリティが複数の場合、ランダムでその一つになる
+            if (abilityList.length) {
+                return abilityList[Math.floor(Math.random() * abilityList.length)].id;
+            } else {
+                return 1;
+            }
+        }
+        // あるスキル/アイテムに対する武器熟練度の取得
+        weaponProficiencyForItem(id) {
+            const meta = $dataSkills[id].meta;
+            const demandedWeaponType = meta ? JSON.parse(meta["weaponType"]) : []; // スキルが要求する武器練度のタイプ一覧
+            const weapon = this._weapon.object();
+            const weaponTypeId = weapon ? weapon.wtypeId : 0; // 今装備している武器タイプ
+            // 今装備している武器タイプがスキルが要求する武器練度のタイプに含まれている場合、今装備している武器の練度を出力する
+            return demandedWeaponType.includes(weaponTypeId) ? this.subject().weaponProficiency(weaponTypeId) : 0;
+        }
+        // スキルの設定
+        setSkill() {
+            this._item.setObject($dataSkills[this._skillId]);
+        }
+        scopeType() {
+            return this.rangeData()[0];
+        }
+        range() {
+            return this.rangeData()[1];
+        }
+        effectiveRange() {
+            return this.rangeData()[2];
+        }
+        rangeData() {
+            const range = this._skillId > 1 ? this._item.objectMeta("range") : this._weapon.objectMeta("range");
+            return range ? range : ["target", 1, 0];
+        }
+        proficiencyData() {
+            const demandedWeaponType = this._item.objectMeta("weaponType");
+            return demandedWeaponType ? demandedWeaponType : [];
+        }
+        // ================================================================
+        // Actionの上位処理
+        // ================================================================
+        processAction() {
+            if (this.isAttack()) {
+                this.processAttack();
+            } else 
+            if (this.isMove()) {
+                this.processMove();
+            }
+        }
+        // ================================================================
+        // 移動の処理
+        // ================================================================
+        processMove() {
+            const id = this.subject().subjectBattlerId();
+            this._itemPerformance.addMoveData(id);
+        }
+        // ================================================================
+        // 攻撃の上位処理
+        // ================================================================
+
+        // 攻撃を行う場所を収集
+        // 一つの攻撃行動に対し、範囲内の敵を収集　→　収集した敵毎にダメージ等計算　→　[敵の座標、アニメーションID、ダメージ量]を１つの行動の描画処理用データリストに追加
+        processAttack() {
+            // 対象のリスト
+            const entries = this._itemScope.itemTargetEntries();
+            // 数値上の処理
+            // 発動回数によるループ
+            for (let repeat = 0; repeat < this._item.object().repeats; repeat++) {
+                // アニメーション再生のためのデータ用意
+                this._itemPerformance.addAnimationData([entries.map((entry) => {return [...entry[0]]}), this._item.object().animationId]);
+                // 効果発動箇所によるループ
+                for (let i = 0; i < entries.length; i++) {
+                    // 対象への効果適用
+                    const targets = entries[i][1];
+                    const damagePopups = [];
+                    const evasions = [];
+                    // 対象によるループ
+                    for (let j = 0; j < targets.length; j++) {
+                        // データ上の処理
+                        const target = $gameBattleSystems.battler(targets[j]);
+                        this.apply(target);
+                        // ダメージポップアップのためのデータ用意
+                        if (this._itemHitRate > 0) { // {type: , reverse: , critical: }
+                            const setting = {type: this.damageType(), reverse: false, critical: false};
+                            if (this._itemHitRate === CRITICAL_RATE) {setting.critical = true};
+                            damagePopups.push([target.subjectBattlerId(), this._damageValue, setting]);
+                        } else {
+                            damagePopups.push([target.subjectBattlerId(), 0, {type: "MISS", reverse: false, critical: false}]);
+                        }
+                        // 回避行動のためのデータ用意
+                        if(this._itemHitRate < 100) {
+                            evasions.push([target.subjectBattlerId(), ...this._evasionDestination, this._itemHitRate])
+                        }
+                    }
+                    this._itemPerformance.addDamagePopupData(damagePopups);
+                    this._itemPerformance.addEvasionData(evasions);
+                }
+            }
+        }
+        // 効果適用処理
+        apply(target) {
+            // 命中判定
+            this._itemHitRate = this.itemHitRate(target);
+            if (this._itemHitRate > 0) {
+                // ダメージ判定
+                if (this.item().damage.type > 0) {
+                    this._damageValue = this.makeDamageValue(target, this._itemHitRate);
+                    this.executeDamage(target, this._damageValue);
+                }
+                // 追加効果判定
+                for (const effect of this.item().effects) {
+                    this.applyItemEffect(target, effect);
+                }
+            }
+            if (this._itemHitRate < 100){
+                this._evasionDestination = this.evadeDestination(target);
+            }
+        }
+        // ダメージの対象が何か
+        damageType() {
+            if(this.isHpEffect()) {
+                return "HP";
+            } else 
+            if(this.isMpEffect()) {
+                return "MP";
+            }
+        }
+        // ================================================================
+        // 命中判定関係
+        // ================================================================
+        //命中判定
+        itemHitRate(target) {
+            const goal = this.itemHitGoal(target);
+            const random = Math.random() * 100;
+            if (random < goal / 4) {
+                return CRITICAL_RATE;
+            } else
+            if (random < goal / 2) {
+                return 100;
+            } else
+            if (random < goal) {
+                return 50;
+            }
+            return 0;
+        }
+        //命中判定目標
+        itemHitGoal(target) {
+            const item = this.item();
+            const a = this.subject();
+            const b = target;
+            
+            const hit = a.dex + a.agi + item.successRate + this.weaponProficiencyForItem(this._skillId);
+            const eva = b.dex + b.agi;
+            return hit - eva;
+        }
+        // ================================================================
+        // ダメージ計算
+        // ================================================================
+        // Game_Actionのダメージ計算結果に、命中レベルによるダメージ補正をかける
+        makeDamageValue(target, itemHitRate) {
+            const damage = Game_Action.prototype.makeDamageValue.call(this, target);
+            return Math.floor(damage * itemHitRate / 100);
+        }
+        // ================================================================
+        // 相手の回避演出に関する処理のデータ
+        // ================================================================
+        //回避先座標決定
+        evadeDestination(target) {
+            const evaCharaX = target.subjectCharacter().x;
+            const evaCharaY = target.subjectCharacter().y;
+    
+            let moveX = 0;
+            let moveY = 0;
+            let towardX = 0;
+            let towardY = 0;
+        
+            for (let movable = false; movable === false;) {
+                moveX = Math.floor(Math.random() * (2+1) - 1);
+                moveY = Math.floor(Math.random() * (2+1) - 1);
+                towardX = evaCharaX + moveX;
+                towardY = evaCharaY + moveY;
+            
+                let condition = 0;
+                if ($gameBattleSystems.battlerIdXy(towardX, towardY) >= 0) {continue};
+                if (moveX === 0 && moveY === 0) {continue};
+                if (towardX < MIN_X || towardX > MAX_X) {continue};
+                if (towardY < MIN_Y || towardY > MAX_Y) {continue};
+        
+            if (condition === 0) {movable = true};
             };
-        };
-        
-        for (let i = 1, obj = 0, id = 0; i <= targetList.length; i++) {
-            id = targetList[i-1]._eventId;
-            obj = {_x:$gameMap.event(id).x, _y:$gameMap.event(id).y};
-            animeTarget.push(obj);
-        };
-    }
-
-    else if (atkType === "point") {
-        const obj = {_x:this._mouseMapX, _y:this._mouseMapY};
-        animeTarget.push(obj);
-    }
-
-    else if (atkType === "target") {
-        const targetEventId = this.battlerList()[userEventId]._normalAttackTargetId[0]._eventId;
-        
-        const obj = {_x:this.getXorY(targetEventId)._x, _y:this.getXorY(targetEventId)._y};
-        animeTarget.push(obj);
-    }
-
-    else if (atkType === "teleport") {
-    }
-
-    else if (atkType === "self") {
-        const obj = {_x:this.getXorY(userEventId)._x, _y:this.getXorY(userEventId)._y};
-        animeTarget.push(obj);
-    };
-
-    return animeTarget;
-};
-
-//攻撃範囲内の敵ID収集
-Game_BattleSystems.prototype.skillTargetList = function (userEventId, skillMeta) {
-    const skillTargetId = [null];
-
-    const atkType = JSON.parse(skillMeta.skillRange)[0];
-    if (atkType === "direction") {
-        let usercharaId = userEventId
-        if (userEventId === 0) {usercharaId = - 1};
-
-        const direct = this.getXorY(usercharaId).direction() / 2;
-        const range = JSON.parse(skillMeta.skillRange);
-
-        const rangeMod = [2, 1, 1, 2];
-        const horRange = range[rangeMod[(direct - 1) % 4]];
-        const verRange = range[rangeMod[(direct + 1) % 4]];
-        const modX = [-Math.floor(horRange / 2), -horRange, 1, -Math.floor(horRange / 2)];
-        const modY = [1, -Math.floor(verRange / 2), -Math.floor(verRange / 2), -verRange];
-        const baseX = $gamePlayer.x + modX[direct - 1];
-        const baseY = $gamePlayer.y + modY[direct - 1];
-
-        for (let i = 1; i <= horRange * verRange; i++) {
-            const x = baseX + Math.floor( (i - 1) % horRange )
-            const y = baseY + Math.floor( (i - 1) / horRange )
-            const eventId = $gameMap.eventIdXy(x, y);
-            const obj = {_eventId:eventId}
-            if (eventId != 0) {skillTargetId.push(obj)};
-        };
-    }
-
-    else if (atkType === "scope") {
-        const range = JSON.parse(skillMeta.skillRange)[1];      
-        
-        for (let i = 1, x = 0, y = 0; i <= range ** 2 ; i++) {
-            x = $gamePlayer.x - Math.floor((range - 1) / 2) + Math.floor((i + 1) % range);
-            y = $gamePlayer.y - Math.floor((range - 1) / 2) + Math.floor((i - 1) / range);
-            const eventId = $gameMap.eventIdXy(x, y);
-
-            if (eventId > 0) {
-                //ID収集
-                const obj = {_eventId:eventId};
-                skillTargetId.push(obj);
-            };
-        };
-    }
-
-    else if (atkType === "point") {
-
-        const mouseMapX = battleSystems._mouseMapX;
-        const mouseMapY = battleSystems._mouseMapY;
-        
-        const scope = JSON.parse(skillMeta.skillRange)[2];
-        
-        const baseX = mouseMapX - Math.floor(scope / 2);
-        const baseY = mouseMapY - Math.floor(scope / 2);
-        
-        for (let i = 1; i <= scope ** 2; i++) {
-            const eventId = $gameMap.eventIdXy(baseX + (i - 1) % scope, baseY + Math.floor((i - 1) / scope))
-            if ( eventId != 0 ) {
-                const obj = {_eventId:eventId}
-                skillTargetId.push(obj);
-            };
-        };  
-    }
-
-    else if (atkType === "target") {
-        const obj = this.battlerList()[userEventId]._normalAttackTargetId[0];
-        skillTargetId.push(obj);
-    }
-
-    else if (atkType === "teleport") {
-    }
-
-    else if (atkType === "self") {
-        const obj = {_eventId:userEventId}
-        skillTargetId.push(obj);
-    };
-
-    return skillTargetId;
-};
-
-//アニメーション
-Game_BattleSystems.prototype.decideAnimation = function(battlerIndex, skillId) {
-    if (skillId === 1) {
-        const weaponId = this.battlerList()[battlerIndex]._selectedWeaponId;
-        return $dataWeapons[weaponId].animationId;
-    } else if (skillId != 1) {
-        return $dataSkills[skillId].animationId;
-    };
-};
-
-Game_BattleSystems.prototype.getAnimation = function() { 
-    const battlerIndex = this.attackData()[this.attackDataIndex()]._skillUserId;
-    const skillId = this.attackData()[this.attackDataIndex()]._skillId;
-    return this.decideAnimation(battlerIndex, skillId);
-}
-
-//熟練度計算
-//発動したスキルに対応した武器タイプを取得
-//装備中武器の武器タイプを取得→その武器タイプが発動スキルに対応してるか
-//対応していたらその武器の熟練度を取得
-Game_BattleSystems.prototype.weaponProficiency = function (battlerIndex, skillId) {
-    const demandedWeaponType = JSON.parse($dataSkills[skillId].meta.weaponType);
-    const equipedWeaponId = this.battlerList()[battlerIndex]._selectedWeaponId;
-    const weaponType = this.weaponIdToType(equipedWeaponId).weaponType;
-
-    const isMetDemand = demandedWeaponType.includes(equipedWeaponId);
-    let proficiency = 0;
-    if (isMetDemand) {
-        proficiency = this.battlerList()[battlerIndex].weaponProficiency()[weaponType];
-    } else {
-        proficiency = 0;
-    };
-    return Number(proficiency);
-};
-
-//武器タイプIDを武器タイプ名に変換
-Game_BattleSystems.prototype.weaponIdToType = function (equipedWeaponId) {
-    const weaponTypeId = $dataWeapons[equipedWeaponId].wtypeId;
-
-    const table = [
-        {weaponTypeId:null, weaponType:"martialArts"},
-        {weaponTypeId:1, weaponType:"sword"},
-        {weaponTypeId:2, weaponType:"spear"},
-        {weaponTypeId:3, weaponType:"axes"},
-        {weaponTypeId:4, weaponType:"hammer"},
-        {weaponTypeId:5, weaponType:"martialArts"},
-        {weaponTypeId:6, weaponType:"throwing"},
-        {weaponTypeId:7, weaponType:"sword"},
-        {weaponTypeId:8, weaponType:"rod"},
-        {weaponTypeId:9, weaponType:"scripture"},
-        {weaponTypeId:10, weaponType:"mageGun"},
-        {weaponTypeId:11, weaponType:"martialArts"},
-       ];
-       
-    const weaponType = table[weaponTypeId];
-    return weaponType;
-};
-
-//スキルコスト
-Game_BattleSystems.prototype.getCost = function(attacker, skill) {
-    //スキルのコスト
-    const skillData = $dataSkills[skill];
-    const mpConsume = skillData.mpCost;
-
-    //パッシブスキルによる補正
-
-    return {_mp:mpConsume};
-};
-
-Game_BattleSystems.prototype.consumeCost = function () {
-    const attacker = this.attackData()[this.attackDataIndex()]._skillUserId;
-    const skill = this.attackData()[this.attackDataIndex()]._skillId;
-
-    const cost = this.getCost(attacker, skill);
-
-    this._battlerList[attacker]._mp -= cost._mp;
-};
-
-//ダメージ計算
-//命中判定→ダメージ計算→結果をダメージ結果配列に格納xスキル発動回数分
-//↑この処理を攻撃範囲内の敵の数だけ行う
-//その後、まとめてダメージ反映処理を行う
-
-//命中判定目標
-Game_BattleSystems.prototype.skillHitGoal = function (attacker, target, skill) {
-    const skillData = $dataSkills[skill];
-
-    const a = this.battlerList()[attacker].status();
-    const b = this.battlerList()[target].status();
     
-    const skillAim = skillData.successRate;
-    const proficiency = this.weaponProficiency(attacker, skill);
-    
-    const hit = a.dex + a.agi + skillAim + proficiency;
-    const eva = b.dex + b.agi;
-
-    const goal = hit - eva;
-
-    return goal;
-
-};
-
-//命中判定
-Game_BattleSystems.prototype.damageModByHit = function (attacker, target, skill) {
-    const goal = this.skillHitGoal(attacker, target, skill);
-    const random = Math.floor(Math.random() * 100 + 1);
-
-    let damageModByHit = 0;
-    if (random <= goal / 4) {
-        damageModByHit = 300;
-    } else if (random <= goal / 2) {
-        damageModByHit = 100;
-    } else if (random <= goal) {
-        damageModByHit = 50;
-    } else if (random > goal) {
-        damageModByHit = 0;
-    };
-
-    this._tempDamageModByHit = damageModByHit;
-    return damageModByHit;
-};
-
-//ダメージ計算式を実行
-Game_BattleSystems.prototype.damageCalculate = function (attacker, target, skill) {
-    const a = this.battlerList()[attacker].status();
-    const b = this.battlerList()[target].status();
-    
-    const skillData = $dataSkills[skill];
-    const damageModByHitLv = this.damageModByHit(attacker, target, skill);
-    
-    //ダメージ計算
-    // console.log({fomula:eval(skillData.damage.formula), mod:damageModByHitLv});
-    const damage = eval(skillData.damage.formula) * damageModByHitLv / 100;
-    return damage;
-};
-
-//ダメージ計算
-Game_BattleSystems.prototype.onceDamage = function(attacker, target, skill) {
-    const damage = this.damageCalculate(attacker, target, skill);
-    return damage;
-};
-
-Game_BattleSystems.prototype.damageTarget = function (skill) {
-    const skillData = $dataSkills[skill];
-    const damageType = skillData.damage.type;
-    if (damageType === 1 || damageType === 3 || damageType === 5) {
-        damageTarget = "hp";
-    } else if (damageType === 2 || damageType === 4 || damageType === 6) {
-        damageTarget = "mp";
-    };
-    return damageTarget;
-};
-
-Game_BattleSystems.prototype.damageSign = function(skill) {
-    //攻撃なのか回復なのか
-    const skillData = $dataSkills[skill];
-    const damageType = skillData.damage.type;
-
-    let damageSign = 0;
-    damageType === 3 || damageType === 4 ? damageSign = -1 : damageSign = 1;
-    return damageSign;
-};
-
-Game_BattleSystems.prototype.executeDamage = function (target, skill, damage) {
-    const skillData = $dataSkills[skill];
-    const damageType = skillData.damage.type;
-    let damageTarget = "";
-    if (damageType === 1 || damageType === 3 || damageType === 5) {
-        damageTarget = "_hp";
-    } else if (damageType === 2 || damageType === 4 || damageType === 6) {
-        damageTarget = "_mp";
-    };
-
-    this._battlerList[target][damageTarget] -= damage;
-};
-
-Game_BattleSystems.prototype.drainCalcurale = function(attacker, skill, damage) {
-    //HP/MP吸収攻撃の処理
-    //<drain:["hp", 50]>
-    const skillData = $dataSkills[skill];
-    const damageType = skillData.damage.type;
-
-    if(damageType === 5 || damageType === 6) {
-        const drainData = JSON.parse(skillMeta.drain)
-        const drainTarget = drainData[0];
-        const drainRate = drainData[1];
-
-        this._battlerList[attacker][`_${drainTarget}`] += damage * drainRate / 100; 
-    };
-};
-
-//回復時に最大HP/MPを超えないようにする
-Game_BattleSystems.prototype.notOverStatus = function(attacker, target) {
-    this._battlerList[attacker]._hp = Math.min(this.battlerList()[attacker]._hp, this.battlerList()[attacker].status().mhp)
-    this._battlerList[attacker]._mp = Math.min(this.battlerList()[attacker]._mp, this.battlerList()[attacker].status().mmp)
-
-    this._battlerList[target]._hp = Math.min(this.battlerList()[target]._hp, this.battlerList()[target].status().mhp)
-    this._battlerList[target]._mp = Math.min(this.battlerList()[target]._mp, this.battlerList()[target].status().mmp)
-};
-
-//////攻撃の処理//////
-
-Game_BattleSystems.prototype.skillAttack = function(loop) {
-    const attackDataIndex = this.attackDataIndex();
-    const attacker = this.attackData()[attackDataIndex]._skillUserId;
-    this._tempAttacker = attacker;
-    const targetNum = this.attackData()[attackDataIndex]._skillTargetId.length - 1;
-    this._tempTargetNum = targetNum;
-    const targetIndex = this.loop(loop, targetNum)._targetIndex;
-    this._tempTargetIndex = targetIndex;
-    const targetId = this.attackData()[attackDataIndex]._skillTargetId[targetIndex + 1]._eventId;
-    this._tempTargetId = targetId;
-    const skill = this.attackData()[attackDataIndex]._skillId;
-
-    const damage = this.damageSign(skill) * this.onceDamage(attacker, targetId, skill);
-    this._tempDamage = damage;
-
-    this.executeDamage(targetId, skill, damage);
-    this.drainCalcurale(attacker, skill, this.onceDamage(attacker, targetId, skill));
-
-    this.notOverStatus(attacker, targetId);
-};
-
-//回避先座標決定
-Game_BattleSystems.prototype.decideEvaPoint = function(evaChara) {
-    let chara = 0;
-    evaChara != 0 ? chara = -1 : chara = evaChara;
-
-    const evaCharaX = this.getXorY(chara)._x;
-    const evaCharaY = this.getXorY(chara)._y;
-
-    let moveX = 0;
-    let moveY = 0;
-    let towardX = 0;
-    let towardY = 0;
-   
-    for (let movable = false; movable === false;) {
-        moveX = Math.floor(Math.random() * (2+1) - 1);
-        moveY = Math.floor(Math.random() * (2+1) - 1);
-        towardX = evaCharaX + moveX;
-        towardY = evaCharaY + moveY;
-    
-        let condition = 0;
-        $gameMap.eventIdXy(towardX, towardY) > 0 ? condition += 1 : condition += 0;
-        moveX === 0 && moveY === 0 ? condition += 1 : condition += 0;
-        towardX < MIN_X || towardX > MAX_X ? condition += 1 : condition += 0;
-        towardY < MIN_Y || towardY > MAX_Y ? condition += 1 : condition += 0;
-   
-     if (condition === 0) {movable = true};
-    };
-
-    return {_moveX:moveX, _moveY:moveY};
-};
-
-//回避時のキャラの動き
-Game_BattleSystems.prototype.evaActionList = function(paramObj) {
-    const evaAction = {
-        "list":[
-            {"code":35},
-            {"code":44,"parameters":[{"name":"MISS","volume":20,"pitch":100,"pan":0}]},
-            {"code":14, "parameters":[paramObj._moveX, paramObj._moveY]}, 
-            {"code":36}, 
-            {"code":0}
-        ],
-       "repeat":false, 
-       "skippable":true,
-    };
-    return evaAction;
-};
-
-////ステート付与////
-////ステート付与////
-//スキルの追加効果で付与されるステートのデータの配列を取得
-Game_BattleSystems.prototype.getSkillEffectStateData = function(skillId) {
-    const effects = $dataSkills[skillId].effects;
-    let stateList = [];
-    for (let i = 1; i >= effects.length ; i++) {
-        if (effects[i-1].code === 21) {
-            stateList.push($dataStates[effects[i-1].dataId]);
-        };
-    };
-    return stateList;
-};
-
-//ステートを付与
-Game_BattleSystems.prototype.addState = function(battlerIndex, stateId) {
-    const stateList = this.battlerList()[battlerIndex]._state;
-
-    let isAddedState = false;
-    let numAddedState = null;
-    for (let i = 1 ; i <= stateList.length ; i++) {
-        if (stateList[i].id === stateId) {
-            isAddedState = true;
-            numAddedState = i;
-        };
-    };
-
-    const max = $dataStates[stateId].maxTurns;
-    const min = $dataStates[stateId].minTurns;
-
-    if (this.isAddedState(stateId) === true) {
-        const lastingTurn = Math.random() * (max - min + 1) + min;
-        this._state[numAddedState].leftTurn = Math.max(this._state[numAddedState].leftTurn, lastingTurn);
-    } else {
-        const stateData = $dataStates[stateId];
-        stateData.leftTurn = Math.random() * (max - min + 1) + min;
-
-        this._state.push(stateData);
-    };
-};
-
-
-//ターンごとのステートに関する処理
-
-//歩行でのターン経過を無効化
-Game_Actor.prototype.stepsForTurn = function() {
-    return 0;
-};
-
-//１つの
-Game_BattleSystems.prototype.turnProcessOfState = function(battlerIndex) {
-    const stateList = this.battlerList()[battlerIndex]._state;
-    //ステート継続数を-1、0だったら解除
-    for (let i = 1 ; i <= stateList.length - 1 ; i++) {
-        stateList[i].leftTurn -= 1;
-        if (stateList[i].leftTurn <= 0) {
-            stateList.splice(i,1);
-        };
+            return [moveX, moveY];
+        }
+        // 演出データ
+        performanceProcessData() {
+            return this._itemPerformance.data();
+        }
     }
-};
 
-////追加能力値に関する処理////
-////追加能力値に関する処理////
+    const _Game_ActionResult_clear = Game_ActionResult.prototype.clear;
+    Game_ActionResult.prototype.clear = function() {
+        _Game_ActionResult_clear.apply(this, arguments);
+        this.itemHitRate = 100;
+    }
 
-Game_BattleSystems.prototype.turnRefleshAll = function() {
-    for (let i = 1; i <= this._enemyNum; i++) {
-        this.turnAddStatusReflesh(i-1);
-    };
-};
+    const _Game_ActionResult_isHit = Game_ActionResult.prototype.isHit;
+    Game_ActionResult.prototype.isHit = function() {
+        if (this.itemHitRate) {
+            return this.itemHitRate > 0;
+        }
+        return _Game_ActionResult_isHit.apply(this);
+    }
 
-Game_BattleSystems.prototype.spStateReflesh = function() {
-    //HP満タン時に能力値増加のステート
-};
+    // ================================================================
+    // 
+    // GTT_ItemScope 
+    // ---効果が発動する箇所とそれぞれの効果を受けるバトラーをまとめるクラス
+    // ================================================================
 
-Game_BattleSystems.prototype.turnAddStatusReflesh = function(battlerIndex) {
-    this._battlerList[battlerIndex]._statusBuffs = {};
-
-    ////////////////////////////
-    ////通常能力値に関する特徴////
-    ////////////////////////////
-
-    //攻撃力倍率
-    const atkObj = {code:21, _dataId:2};
-    this._battlerList[battlerIndex]._statusBuffs.atkRate = this.getTurnRate(battlerIndex, atkObj);
-
-    //防御倍率
-    const defObj = {code:21, _dataId:3};
-    this._battlerList[battlerIndex]._statusBuffs.defRate = this.getTurnRate(battlerIndex, defObj);
-
-    //魔力倍率
-    const matObj = {code:21, _dataId:4};
-    this._battlerList[battlerIndex]._statusBuffs.defRate = this.getTurnRate(battlerIndex, matObj);
-
-    //魔防倍率
-    const mdfObj = {code:21, _dataId:5};
-    this._battlerList[battlerIndex]._statusBuffs.mdfRate = this.getTurnRate(battlerIndex, mdfObj);
-
-    //敏捷倍率
-    const agiObj = {code:21, _dataId:6};
-    this._battlerList[battlerIndex]._statusBuffs.agiRate = this.getTurnRate(battlerIndex, agiObj);
-
-    /////////////////
-    ////追加能力値////
-    /////////////////
-
-    //HP再生率
-    const hpRgnObj = {code:22, _dataId:7};
-    this._battlerList[battlerIndex]._statusBuffs.hpRgn = this.getTurnRate(battlerIndex, hpRgnObj);
-
-    //MP再生率
-    const mpRgnObj = {code:22, _dataId:8};
-    this._battlerList[battlerIndex]._statusBuffs.mpRgn = this.getTurnRate(battlerIndex, mpRgnObj);
-
-    //回避
-    const evaObj = {code:22, _dataId:1};
-    this._battlerList[battlerIndex]._statusBuffs.eva = this.getTurnRate(battlerIndex, evaObj);
-
-    //魔法反射
-    const reflectMagicObj = {code:22, _dataId:5};
-    this._battlerList[battlerIndex]._statusBuffs.reflectMagic = this.getTurnRate(battlerIndex, reflectMagicObj);
-
-    //反撃
-    const countorObj = {code:22, _dataId:6};
-    this._battlerList[battlerIndex]._statusBuffs.counter = this.getTurnRate(battlerIndex, countorObj);
-
-    /////////////////
-    ////特殊能力値////
-    /////////////////
-
-    //MP消費率
-    const mpCostCutObj = {code:23, _dataId:4};
-    this._battlerList[battlerIndex]._statusBuffs.mpCostCut = this.getTurnRate(battlerIndex, mpCostCutObj);
-
-    /////////////////
-    ////追加スキル////
-    /////////////////
-
-    //通常攻撃のHP吸収率
-    this._battlerList[battlerIndex]._statusBuffs.hpDrainRate_passive = this.getTurnRate_Ori(battlerIndex, "hpDrainRate_passive");
-
-    //通常攻撃のMP吸収率
-    this._battlerList[battlerIndex]._statusBuffs.mpDrainRate_passive = this.getTurnRate_Ori(battlerIndex, "mpDrainRate_passive");
-
-    //会心攻撃倍率
-    this._battlerList[battlerIndex]._statusBuffs.critialAttackDamageRate = this.getTurnRate_Ori(battlerIndex, "critialAttackDamageRate");
-};
-
-//HP再生率とかの率を取得
-Game_BattleSystems.prototype.getTurnRate = function(battlerIndex, traitObj) {
-    let traitRate = 0;
-    //装備
-    const equipList = this.battlerList()[battlerIndex].equip();
-    traitRate += this.traitsCalculate(battlerIndex, equipList, traitObj);
-
-    //パッシブスキル
-    const passiveSkillList = this.battlerList()[battlerIndex].skill();
-    let PassiveStateList = [];
-    for (let i = 1 ; i <= passiveSkillList.length - 1 ; i++) {
-        if (passiveSkillList[i].meta.passiveState != undefined) {
-            const stateData = $dataStates[evval(passiveSkillList[i].meta.passiveState)];
-            PassiveStateList.push(stateData);
-        };
-    };
-    traitRate += this.traitsCalculate(battlerIndex, PassiveStateList, traitObj);
-
-    //ステート
-    const stateList = this.battlerList()[battlerIndex]._state;
-    traitRate += this.traitsCalculate(battlerIndex, stateList, traitObj);
-
-    return traitRate;
-};
-
-//デフォルト実装の能力値の取得
-Game_BattleSystems.prototype.traitsCalculate = function (battlerIndex, list, traitObj) {
-    let result = 0;
-    for (let i = 1 ; i <= list.length - 1 ; i++) {
-        if (list[i] != undefined) {
-            const traits = list[i-1].traits;
-            if (traits.code === traitObj.code && traits._dataId === traitObj._dataId) {
-                let value = 0
-    
-                //特性発動に条件がある場合
-                const meta = list[i-1].meta;
-                if (this.isTraitConditionOn(battlerIndex, meta)) {
-                    //定数の場合
-                    value = traits.value;
-                    //変数の場合
-                    const code = String(traitObj.code);
-                    const traitValue = list[i-1].meta[code];
-    
-                    if (traitValue != undefined) {value = traitValue};                
+    class GTT_ItemScope {
+        constructor() {
+            this._subjectBattlerId = -1;
+            this._scopeType = "";
+            this._range = 0;
+            this._effectiveRange = 0;
+            this._itemTargetTileList = [];
+            this._itemTargetBattlersIdList = [];
+            this._itemTargetEntries = [];
+        }
+        // ================================================================
+        // データ
+        // ================================================================
+        // 主体のデータ
+        subject() {
+            return $gameBattleSystems.battlers()[this._subjectBattlerId];
+        }
+        // 効果発動マスとその発動した効果の対象のバトラーリストの組のリスト
+        itemTargetEntries() {
+            return this._itemTargetEntries;
+        }
+        // アイテムの効果が発動するマス
+        itemTargetTileList() {
+            return this._itemTargetTileList; // [[x, y], [x, y], ...]
+        }
+        // アイテムの効果発動の対象のバトラーインデックス
+        itemTargetBattlersIdList() {
+            return this._itemTargetBattlersIdList;
+        }
+        // アイテムの効果発動の対象のバトラー
+        itemTargetBattlers() {
+            return this._itemTargetBattlersIdList.map((index) => {
+                return $gameBattleSystems.battlers()[index];
+            })
+        }
+        // ================================================================
+        // データ設定
+        // ================================================================
+        setup(action) {
+            this._subjectBattlerId = action._subjectBattlerId;
+            this._scopeType = action.scopeType();
+            this._range = action.range();
+            this._effectiveRange = action.effectiveRange();
+            this.createItemTargetTileList();
+            this.createItemTargetEntries();
+        }
+        // ================================================================
+        // アイテムの効果が発動するマス収集
+        // ================================================================
+        // アイテムの効果が発動するマスのリストを作成
+        createItemTargetTileList() {
+            const scopeType = this._scopeType;
+            const range = this._range;
+            const effectiveRange = this._effectiveRange;
+            let list
+            switch(scopeType) {
+                case "direction":
+                    list = [this.typeDirectionTargetTileXy(range, effectiveRange)];
+                    break;
+                case "area":
+                    list = [this.subject().subjectCharacter().x, this.subject().subjectCharacter().y];
+                    break;
+                case "areaEach":
+                    list = this.typeAreaEachTargetTileXy(range, effectiveRange);
+                    break;
+                case "point":
+                    list = [[TouchInput.x, TouchInput.y]];
+                    break;
+                case "target":
+                    list = [[this.subject().rockOnCharacter().x, this.subject().rockOnCharacter().y]];
+                    break;
+                case "self":
+                    list = [[this.subject().subjectCharacter().x, this.subject().subjectCharacter().y]];
+                    break;
+                default:
+                    list = [[0,0]];
+                    break;
+            }
+            this._itemTargetTileList = list;
+        }
+        // directionタイプのアクションの効果発動マスの座標を出力
+        typeDirectionTargetTileXy(range) {
+            const subjectCharaDirect = this.subject().subjectCharacter()._direction;
+            let targetX = this.subject().subjectCharacter().x;
+            let targetY = this.subject().subjectCharacter().y;
+            const distance = Math.max((range - 1) / 2, 1);
+            switch(subjectCharaDirect) {
+                case 2:
+                    targetY = Math.min(targetY + distance, MAX_Y);
+                    break;
+                case 4:
+                    targetX = Math.max(targetX - distance, MIN_X);
+                    break;
+                case 6:
+                    targetX = Math.min(targetX + distance, MAX_X);
+                    break;
+                case 8:
+                    targetY = Math.max(targetY - distance, MIN_Y);
+                    break;
+                default:
+                    break;
+            }
+            return [targetX, targetY];
+        }
+        // areaEachタイプの攻撃のアクションの効果発動マスの座標を出力
+        typeAreaEachTargetTileXy(range, effectiveRange) {
+            // 範囲内の敵の座標を集める
+            const targetXyList = [];
+            const baseX = (this.subject().subjectCharacter().x - range).clamp(MIN_X, MAX_X);
+            const baseY = (this.subject().subjectCharacter().y - range).clamp(MIN_Y, MAX_Y);
+            for (let dx = 0; baseX + dx < Math.min(baseX + range * 2 + 1, MAX_X + 1); dx++) {
+                for (let dy = 0; baseY + dy < Math.min(baseY + range * 2 + 1, MAX_Y + 1); dy++) {
+                    const x = baseX + dx;
+                    const y = baseY + dy;
+                    if (Math.abs(x - this.subject().subjectCharacter().x) + Math.abs(y - this.subject().subjectCharacter().y) > range + effectiveRange) {continue};
+                    if ($gameBattleSystems.battlerXy(x, y)) {
+                        // console.log([$gameBattleSystems.battlerXy(x, y).role(), this.subject().role()])
+                        if ( $gameBattleSystems.battlerXy(x, y).role() != this.subject().role()) {
+                        //ID収集
+                        targetXyList.push([x, y]);
+                        }
+                    };
                 };
-    
-                result += value * 100 - 100;
-            };   
-        };
-    };
-    return result;
-};
-
-//特性関連で追加した条件式が満たされているかどうか
-Game_BattleSystems.prototype.isTraitConditionOn = function(battlerIndex, meta) {
-    const condition = meta.condition;
-    let result = false;
-    if (condition === undefined) {
-        //条件式が設定されていない
-        result = true;
-    } else {
-        const a = this.battlerList()[battlerIndex].status();
-        eval(condition) ? result = true : result = false;
-    };
-    return result;
-};
-
-//オリジナルの能力値の率を取得
-Game_BattleSystems.prototype.getTurnRate_Ori = function(battlerIndex, param) {
-    let traitRate_Ori = 0;
-    //装備
-    const equipList = this.battlerList()[battlerIndex].equip();
-    traitRate_Ori += this.traitsCalculate_Ori(battlerIndex, equipList, param);
-
-    //パッシブスキル
-    const passiveSkillList = this.battlerList()[battlerIndex].skill();
-    let PassiveStateList = [];
-    for (let i = 1 ; i <= passiveSkillList.length - 1 ; i++) {
-        if (passiveSkillList[i].meta.passiveState != undefined) {
-            const stateData = $dataStates[eval(passiveSkillList[i-1].meta.passiveState)];
-            PassiveStateList.push(stateData);
-        };
-    };
-    traitRate_Ori += this.traitsCalculate_Ori(battlerIndex, PassiveStateList, param);
-
-    //ステート
-    const stateList = this.battlerList()[battlerIndex].state;
-    traitRate_Ori += this.traitsCalculate_Ori(battlerIndex, stateList, param);
-
-    return traitRate_Ori;
-};
-
-//オリジナルの能力値の取得
-Game_BattleSystems.prototype.traitsCalculate_Ori = function (battlerIndex, list, param) {
-    let result = 0;
-    for (let i = 1 ; i <= list.length - 1 ; i++) {
-        if (list[i] != undefined) {
-            const meta = list[i].meta;
-            if (meta[param] != undefined) {
-                
-                //特性発動に条件がある場合
-                if (this.isTraitConditionOn(battlerIndex, meta)) {
-                    //定数の場合
-                    value = eval(meta[param]);           
-                };
-                result += value;
             };
-        };      
-    };
-    return result;
-};
+            return targetXyList;
+        }
+        // ================================================================
+        // 効果範囲内の敵Id収集
+        // ================================================================
+        // アイテムの効果が発動するマスのリストを元に、対象バトラーを集める処理
+        createItemTargetEntries() {
+            this._itemTargetEntries = this._itemTargetTileList.map((tile) => {
+                const rect = this.createItemScopeRect(...tile);
+                const targets = this.inScopeBattlers(...rect);
+                return [tile, targets];
+            })
+        }
+        // あるマスで発動する効果の範囲の四角形情報を生成
+        createItemScopeRect(x, y) {
+            if (this._scopeType === "direction") {
+                return this.typeDirectionRect(x, y);
+            } else 
+            {
+                const effectiveRange = this._effectiveRange;
+                return [x - effectiveRange, y - effectiveRange, effectiveRange, effectiveRange];
+            }
+        }
+        typeDirectionRect(x, y) {
+            const charaDirect = this.subject().subjectCharacter()._direction;
+            let baseX, baseY, width, height;
+            const range = Math.floor(this._range / 2);
+            switch(charaDirect) {
+                case 2: 
+                    baseX = x - this._effectiveRange;
+                    baseY = y - range;
+                    width = this._effectiveRange;
+                    height = this._range;
+                    break;
+                case 4:
+                    baseX = x - range;
+                    baseY = y - this._effectiveRange;
+                    width = this._range;
+                    height = this._effectiveRange;
+                    break;
+                case 6:
+                    baseX = x + range;
+                    baseY = y - this._effectiveRange;
+                    width = this._range;
+                    height = this._effectiveRange;
+                    break;
+                case 8:
+                    baseX = x - this._effectiveRange;
+                    baseY = y + range;
+                    width = this._effectiveRange;
+                    height = this._range;
+                    break;
+                default:
+                    break;
+            }
+            return [baseX, baseY, width, height];
+        }
+        // あるマスで発動する効果の対象のバトラーのリストを出力
+        inScopeBattlers(baseX, baseY, width, height) {
+            const list = [];
+            for (let dx = 0; dx < width * 2 + 1; dx++) {
+                for (let dy = 0; dy < height * 2 + 1; dy++) {
+                    const battlerId = $gameBattleSystems.battlerIdXy(baseX + dx, baseY + dy);
+                    if (battlerId >= 0 && this.subject().role() != $gameBattleSystems.battler(battlerId).role()) {
+                        list.push(battlerId);
+                    }
+                }
+            }
+            return list;
+        }
+    }
 
-//敵イベント消滅
-Game_BattleSystems.prototype.enemyEliminated = function(eventId) {
-    //battlerListで死亡扱いにする
-    $gameBattleSystems.battlerList[eventId] = "dead"; 
-    //消滅関連の共通処理
-    this._enemyNum -= 1;
-};
 
-//ターゲット配列と発動回数をループ回数から算出
-Game_BattleSystems.prototype.loop = function (loop, targetNum) {
-    //(ループ回数 - 1) / 対象の数 + 1 発動回数　(ループ回数 - 1) / 対象の数　配列の順番
-    const repeat = Math.floor(loop / targetNum);
-    //(ループ回数 - 1) % 対象の数 + 1 対象の順番　(ループ回数 - 1) % 対象の数　配列の順番
-    const targetIndex = Math.floor(loop % targetNum);
-    this.loopResult = {_skillRepeat:repeat, _targetIndex:targetIndex};
-    return {_skillRepeat:repeat, _targetIndex:targetIndex};
-};
+    // ================================================================
+    // 
+    // GTT_ActionPerformance
+    // 
+    // ================================================================
 
-Game_BattleSystems.prototype._loopMax = function (param1, param2) {
-    this._loopMax = param1 * param2;
-    return param1 * param2;
-};
+    class GTT_ActionPerformance {
+        constructor() {
+            this._data = [];
+        }
+        data() {
+            return this._data;
+        }
+        // {type: , battlerId: }
+        // {type: , x: , y: , animationId: , targets: [{id: , damage: }]}
+        // {type: , battlerId: , x: , y: }
+        addMoveData(id) {
+            this._data.push({type: "move", battlerId: id})
+        }
+        addAnimationData(animations) { // animations = [[[x, y]], animationId]
+            this._data.push({type: "animation", animations: animations})
+        }
+        addDamagePopupData(damagePopups) { // damagePopsups = [battlerId, damageValue, {type: , reverse: , critical: }]
+            this._data.push({type: "damage", popup: damagePopups});
+        }
+        addEvasionData(evasions) { // evasions = [battlerId, x, y, hitRate]
+            this._data.push({type: "evade", evasions: evasions});
+        }
+    }
+
+    // ================================================================
+    // ポップアップ演出用のデータ
+    // ================================================================
+
+    // ================================================================
+    // 
+    // Game_Itemの追加定義
+    // 
+    // ================================================================
+
+    Game_Item.prototype.objectMeta = function(param) {
+        if (this.isSkill() && this._itemId === 1) {
+            return null;
+        } else {
+            // 上の場合以外は、このデータのメタを参照
+            if (this.object()) {
+                return this.object().meta ? JSON.parse(this.object().meta[param]) : null;
+            } else {
+                return null;
+            }
+        }
+    }
+
+    // ================================================================
+    // 
+    // Game_BattleSystemsの追加定義
+    // 
+    // ================================================================
+
+    class Game_BattleSystems {
+        constructor() {
+            this._battlers = [];
+            this._method = {};
+            this.clearLoop();
+        }
+        // ================================================================
+        // データ
+        // ================================================================
+        // ================================================================
+        // 真偽値保存
+        // ================================================================
+        boolean(param) {
+            return this._boolean[param];
+        }
+        clearBoolean(key) {
+            this._boolean[key] = null;
+        }
+        setBoolean(key, value) {
+            this._boolean[key] = value;
+        }
+        // ================================================================
+        // ループ管理オブジェクト関係
+        // ================================================================
+        clearLoop() {
+            this._loop = {};
+            this._lastLoop = {};
+        }
+        loopValue(param) {
+            this.setupLoop(param);
+            return this._loop[param] - 1;
+        }
+        loopInitialize(param) {
+            this._loop[param] = 0
+            this._lastLoop[param] = false;
+        }
+        setupLoop(param) {
+            if (this._loop[param] === undefined) {
+                this._loop[param] = 0;
+                this._lastLoop[param] = false;
+            }
+        }
+        loopBreak(param1, param2) {
+            this.setupLoop(param1);
+            this._loop[param1]++;
+            if (this._loop[param1] > param2) {
+                this.loopInitialize(param1);
+                return true;
+            }
+            if (this._loop[param1] === param2) {
+                this._lastLoop[param1] = true;
+            }
+            return false;
+        }
+        isLastLoop(param) {
+            return this._lastLoop[param];
+        }
+        // ================================================================
+        // プロパティ
+        // ================================================================
+        battlers() {
+            return this._battlers;
+        }
+        battler(value) {
+            return this._battlers[value];
+        }
+        enemies() {
+            return this._battlers.slice(1, this._battlers.length);
+        }
+        actGaugeMax() {
+            this._actGaugeMax;
+        }
+        battlersNum() {
+            return this._battlers.length;
+        }
+        battlerIdXy(x, y) {
+            return this._battlers.findIndex((battler) => {
+                return battler.subjectCharacter().x === x && battler.subjectCharacter().y === y && battler.isAlive();
+            });
+        }
+        battlerXy(x, y) {
+            return this._battlers.find((battler) => {
+                return battler.subjectCharacter().x === x && battler.subjectCharacter().y === y && battler.isAlive();
+            });
+        }
+        // ================================================================
+        // エンカウント
+        // ================================================================
+        encount(troopId) {
+            // エンカウントする敵を設定
+            this.setTroopId(troopId);
+            // battlerデータを整える
+            this.createBattlers(this._encountTroopGropeId);
+            // スポーン位置を決定
+            this.createPlayerSpawn();
+            this.createEnemySpawnData();
+        }
+        // エンカウントする敵を設定
+        setTroopId(value) {
+            this._encountTroopGropeId = value;
+        }
+        // 戦闘者リストを作る
+        createBattlers(troopId) {
+            const enemies = $dataTroops[troopId].members.map((troop) => {return new Game_Enemy(troop.enemyId, 0, 0)});
+            for (const enemy of enemies) {
+                enemy._hp = enemy.mhp;
+            }
+            this._battlers = [$gameActors.actor(1), ...enemies];
+            // キャラクターIDとバトラーIDの設定
+            this.battlers()[0].setSubjectCharacterId(-1);
+            for (let i = 0; i < this.battlers().length; i++) {
+                // バトラーIDの設定
+                this.battlers()[i].setSubjectBattlerId(i);
+                // 通常攻撃対象の設定
+                const targetCharacterId = this.battlers()[i]._subjectBattlerId > 0 ? -1 : 1;
+                this.battlers()[i].setRockOnCharacterId(targetCharacterId);
+                // 見えていることにする
+                this.battlers()[i].appear();
+            }
+        }
+        // プレイヤースポーン位置設定
+        createPlayerSpawn() {
+            const x = Math.floor(Math.random() * (MAX_X - MIN_X + 1)) + MIN_X;
+            const y = Math.floor(Math.random() * (MAX_Y - MIN_Y + 1)) + MIN_Y;
+            this._battlers[0]._spawnData = [x, y];
+        }
+        // 敵スポーン位置設定
+        createEnemySpawnData() {
+            const centerX = ((MIN_X + MAX_X) / 2);
+            const centerY = ((MIN_Y + MAX_Y) / 2);
+            const signX = - Math.sign(this._battlers[0]._spawnData[0] - centerX);
+            const signY = - Math.sign(this._battlers[0]._spawnData[1] - centerY);
+            for (let i = 1; i < this._battlers.length; i++) {
+                while (true) {
+                    const enemySetX = centerX + signX * Math.floor(Math.random() * ((centerX - 1) / 2 + 1) + 1);
+                    const enemySetY = centerY + signY * Math.floor(Math.random() * ((centerY - 1) / 2 + 1) + 1);
+                    if (this.canSpawn(enemySetX, enemySetY)) {
+                        this._battlers[i]._spawnData = [enemySetX, enemySetY];
+                        break;
+                    }
+                };
+            };
+        }
+        // その位置がスポーン可能か
+        canSpawn(x, y) {
+            return this.battlerIdXy(x, y) < 0;
+        }
+        // hpを設定
+        setBattlersHp(battlerIndex, value) {
+            this._battlers[battlerIndex].hp = value;
+        }
+        // 生きている敵
+        aliveEnemies() {
+            return this._battlers.filter((battler) => {
+                return battler.role() === "enemy" && battler.isAlive();
+            })
+        }
+        // 生きている敵の数
+        aliveEnemiesNum() {
+            return this.aliveEnemies().length;
+        }
+        // 生きている敵のキャラクターIDとhpの組のリスト
+        aliveEnemiesHp() {
+            return this.aliveEnemies().map((enemy) => {
+                return [enemy.subjectCharacterId(), enemy._hp];
+            })
+        }
+        // ================================================================
+        // 戦闘システム
+        // ================================================================
+        processTurn() {
+            // プライヤーの通常攻撃の標的アップデート
+            this.battlers()[0].refleshTarget();
+            // バトラーの行動
+            for (const battler of this.battlers()) {
+                battler.processTurn();
+            }
+            // ターンごとの処理
+            for (const battler of this.battlers()) {
+                battler.onTurnEnd();
+            }
+            // 演出用のデータ生成
+            this.makePerformances();
+        }
+        // ================================================================
+        // 描画データ
+        // ================================================================
+        makePerformances() {
+            this._performances = this.battlers().map((battler) => {
+                return battler._actions.map((action) => {
+                    return action._itemPerformance.data();
+                })
+            }).flat(2);
+        }
+        performances() {
+            return this._performances;
+        }
+        performance(value) {
+            return this._performances[value];
+        }
+        performancesNum() {
+            return this._performances.length;
+        }
+        // ================================================================
+        // 描画処理
+        // ================================================================
+        actionMove(param) {
+            const data = this.performance(this.loopValue(param));
+            if (this.isMove(data.type)) {
+                this.battlers()[data.battlerId].moveTowardRockOnCharacter();
+            }
+        }
+        // 攻撃か 使用できるアニメ再生用イベントがあるか
+        isAnimationTargetExist(param) {
+            const data = this.performance(this.loopValue(param));
+            console.log(data)
+            if (this.isAnimation(data.type)) {
+                return $gameMap.isNeedAnimationTarget();
+            }
+        }
+        // アニメーション再生
+        actionPlayAttackAnimation(param) {
+            const data = this.performance(this.loopValue(param));
+            if (this.isAnimation(data.type)) {
+                const id = $gameMap.usableAnimationTargetId();
+                const character = $gameMap.event(id);
+                const animation = data.animations;
+                character.locate(animation[0], animation[1]);
+                $gameTemp.requestAnimation([character], animation[2]);
+            }
+        }
+        // ゲージ更新用のデータを取得
+        gaugeUpdateData(param) {
+            const data = this.performance(this.loopValue(param));
+            if (this.isDamage(data.type)) {
+                return data.popup;
+            }
+            return [[0, 0]];
+        }
+        // ポップアップ用のデータを取得
+        // バトラーごとにダメージ結果リストを用意してダメージを受けるたびに値を追加していく
+        damagePopupData(param) {
+            const data = this.performance(this.loopValue(param));
+            if (this.isDamage(data.type)) {
+                return data.popup.map((v) => {
+                    return {
+                        characterId: this.battler(v[0]).subjectCharacterId(),
+                        value: v[1],
+                        type: v[2].type,
+                        critical: v[2].critical,
+                        reverse: v[2].reverse,
+                    }
+                })
+            }
+            return ;
+        }
+        // 回避行動
+        actionEvade(param) {
+            const data = this.performance(this.loopValue(param));
+            if (this.isEvade(data.type)) {
+                for (const evasion of data.evasions)
+                this.battlers()[evasion[0]].evade(evasion[1], evasion[2], evasion[3]);
+            }
+        }
+        // メソッド登録を利用した処理
+        allPerformance(param) {
+            const data = this.performance(this.loopValue(param));
+            // 移動
+            if (this.isMove(data.type)) {
+                this.battlers()[data.battlerId].moveTowardRockOnCharacter();
+            }
+            // アニメーション再生
+            this.playAnimations(param);
+            // ポップアップ
+            if (this.isDamage(data.type)) {
+                const popups = data.popup.map((v) => {
+                    return {
+                        battlerId: v[0],
+                        value: v[1],
+                        type: v[2].type,
+                        critical: v[2].critical,
+                        reverse: v[2].reverse,
+                    }
+                });
+                for (const popup of popups) {
+                    const characterId = this.battler(popup.battlerId).subjectCharacterId();
+                    this._method["popup"](characterId, popup.type, popup.value, popup.critical);
+                    if (popup.critical) {
+                        this.battler(popup.battlerId).subjectCharacter().jump(0, 0, 2);
+                    }
+                }
+            }
+            // ゲージ更新
+            this._method["updateGauge"](this.aliveEnemiesHp());
+        }
+        setAnimation(param) {
+            const data = this.performance(this.loopValue(param));
+            if  (this.isAnimation(data.type)) {
+                const needTargetNum = $gameMap.needAdditionalTargetNum(data.animations[0].length);
+                for (let i = 0; i < needTargetNum; i++) {
+                    // アニメーション再生のためのイベントを設置
+                    const id = this._method["getRespawnEventId"](ANIMATION_TARGET, true);
+                    this._method["eventRespawn"](id, 0, 0, true);
+                    $gameMap.event($gameMap._lastSpawnEventId).setAnimationTarget(true);
+                }
+            }
+        }
+        playAnimations(param) {
+            const data = this.performance(this.loopValue(param));
+            if  (this.isAnimation(data.type)) {
+                for (let i = 0; i < data.animations[0].length; i++) {
+                    // アニメーション再生
+                    const id = $gameMap.usableAnimationTargetId();
+                    const character = $gameMap.event(id);
+                    const animation = data.animations[0][i];
+                    character.locate(animation[0], animation[1]);
+                    $gameTemp.requestAnimation([character], data.animations[1]);
+                    if (this.isLastLoop(param) && i === data.animations[0].length - 1) {
+                        this._method["setWaitMode"]("animation");
+                    }
+                }
+            }
+        }
+        // ================================================================
+        // 行動が何か判定
+        // ================================================================
+        isMove(param) {
+            return param === "move";
+        }
+        isAnimation(param) {
+            return param === "animation";
+        }
+        isDamage(param) {
+            return param === "damage";
+        }
+        isEvade(param) {
+            return param === "evade";
+        }
+        // ================================================================
+        // 死亡処理
+        // ================================================================
+        isBattlerDead(param) {
+            const battler = this.battlers()[this.loopValue(param)];
+            return battler.isDead();
+        }
+        deadPerformance(param) {
+            const index = this.loopValue(param);
+            const animationId = Number(DEAD_SETTING.animationId);
+            const charaImage = DEAD_SETTING.characterImage;
+            const charaIndex = Number(DEAD_SETTING.charaImgIndex);
+            const charaDirection = Number(DEAD_SETTING.charaDirection)
+            // 爆発
+            const character = this.battlers()[index].subjectCharacter();
+            $gameTemp.requestAnimation([character], animationId);
+            // 見えないことにする
+            this.battlers()[index].hide();
+            character.setImage(charaImage, charaIndex);
+            character.setPriorityType(0);
+            character.setDirection(charaDirection);
+        }
+        // ================================================================
+        // メソッドの登録
+        // ================================================================
+        setPluginsMethod(key, method) {
+            this._method[key] = method;
+        }
+        // スポーンするイベントのIDを取得する処理
+        setRespawnIdMethod(method) {
+            this.setPluginsMethod("getRespawnEventId", method);
+        }
+        // イベントをスポーンさせる処理
+        setRespawnMethod(method) {
+            this.setPluginsMethod("eventRespawn", method);
+        }
+        // アニメーションウェイトの処理
+        setWaitModeMethod(method) {
+            this.setPluginsMethod("setWaitMode", method);
+        }
+        // ポップアップに関するメソッド
+        setPopupMethod(method) {
+            this.setPluginsMethod("popup", method);
+        }
+        // ゲージ更新に関するメソッド
+        setUpdateGaugeMethod(method) {
+            this.setPluginsMethod("updateGauge", method);
+        }
+    }
+
+    // ================================================================
+    // 使用できるアニメ再生用イベントを検索
+    // ================================================================
+
+    // 攻撃か 使用できるアニメ再生用イベントが存在しないか
+    Game_Map.prototype.isNeedAnimationTarget = function() {
+        // return !this.isAnimationTargetExist();
+    }
+
+    // 攻撃か 使用できるアニメ再生用イベントがあるか
+    Game_Map.prototype.isAnimationTargetExist = function() {
+        return this.events().some((event) => {return event.isAnimationTarget() && !event.isAnimationPlaying()});
+    }
+
+    Game_Map.prototype.needAdditionalTargetNum = function(value) {
+        const needNum = value - this.events().filter((event) => {return event.isAnimationTarget() && !event.isAnimationPlaying()}).length;
+        return Math.max(needNum, 0);
+    }
+
+    // 攻撃か 使用できるアニメ再生用イベントのインデックスを取得
+    Game_Map.prototype.usableAnimationTargetId = function() {
+        const index = this.events().findIndex((event) => {return event.isAnimationTarget() && !event.isAnimationPlaying()});
+        return index + 1;
+    }
+
+    // ================================================================
+    // Game_CharacterBaseの追加定義
+    // ================================================================
+    const _Game_CharacterBase_initMembers = Game_CharacterBase.prototype.initMembers;
+    Game_CharacterBase.prototype.initMembers = function() {
+        _Game_CharacterBase_initMembers.apply(this);
+        this._jumPeakRate = 1;
+    }
+
+    const _Game_CharacterBase_endAnimation = Game_CharacterBase.prototype.endAnimation;
+    Game_CharacterBase.prototype.endAnimation = function() {
+        _Game_CharacterBase_endAnimation.apply(this);
+        if (this.isAnimationTarget()) {
+            // 初期位置にリセット
+            this.locate(0, 0);
+        }
+    }
+
+    // アニメ再生用イベントかどうか
+    Game_CharacterBase.prototype.isAnimationTarget = function() {
+        return this._animationTarget;
+    }
+
+    // アニメ再生用イベントかどうか設定
+    Game_CharacterBase.prototype.setAnimationTarget = function(value) {
+        this._animationTarget = value;
+    }
+
+    // 回避アクション
+    Game_CharacterBase.prototype.evade = function(args) {
+        // 歩行アニメ停止 + 向き固定
+        this.setWalkAnime(false);
+        this.setDirectionFix(true);
+        // 移動の処理
+        if (args.length === 1) {
+            this.moveStraight(...args);
+        } else 
+        if (args.length === 2) {
+            this.moveDiagonally(...args);
+        }
+        // 歩行アニメ再開 + 向き固定解除
+        this.setWalkAnime(true);
+        this.setDirectionFix(false);
+    }
+
+    // ノックバック
+    Game_CharacterBase.prototype.knockback = function(args) {
+        // 向き固定
+        this.setDirectionFix(true);
+        // 移動の処理
+        if (args.length === 1) {
+            this.moveStraight(...args);
+        } else 
+        if (args.length === 2) {
+            this.moveDiagonally(...args);
+        }
+        // 向き固定解除
+        this.setDirectionFix(false);
+    }
+
+    // ジャンプに高さ倍率の設定項目を追加
+    Game_CharacterBase.prototype.jump = function(xPlus, yPlus, heightRate) {
+        if (Math.abs(xPlus) > Math.abs(yPlus)) {
+            if (xPlus !== 0) {
+                this.setDirection(xPlus < 0 ? 4 : 6);
+            }
+        } else {
+            if (yPlus !== 0) {
+                this.setDirection(yPlus < 0 ? 8 : 2);
+            }
+        }
+        this._x += xPlus;
+        this._y += yPlus;
+        const distance = Math.round(Math.sqrt(xPlus * xPlus + yPlus * yPlus));
+        this._jumpPeak = (10 + distance - this._moveSpeed) * (heightRate || 1);
+        this._jumpCount = this._jumpPeak * 2;
+        this.resetStopCount();
+        this.straighten();
+    }
 
 })();
